@@ -71,7 +71,7 @@ File 4H/1D sendiri boleh diunggah, tetapi harus dari sumber dan zona waktu yang 
 
 ### Hasil pada data nyata (Dukascopy 2020–2026)
 
-Aturan Normal (skor ≥ 7) diuji di XAU/USD, EUR/USD, GBP/USD, AUD/USD dan **tidak menunjukkan edge**: ekspektasi −0,02 sampai −0,18 R per trade setelah spread, dan tidak stabil antar tahun. Ringkasan lengkap: [`reports/hasil-dukascopy-2026-11-03.md`](reports/hasil-dukascopy-2026-11-03.md). Pencarian 3.780 variasi aturan (latih 2020–2023, uji 2024–2026) juga tidak menemukan aturan dengan win rate > 50% yang tetap untung di data uji: [`reports/pencarian-aturan-2026-11-03.md`](reports/pencarian-aturan-2026-11-03.md) (workflow `mtf-search.yml`). Workflow `mtf-backtest.yml` (Actions → Run workflow) mengulang pengujian dengan data terbaru.
+Aturan Normal (skor ≥ 7) diuji di XAU/USD, EUR/USD, GBP/USD, AUD/USD dan **tidak menunjukkan edge**: ekspektasi −0,02 sampai −0,18 R per trade setelah spread, dan tidak stabil antar tahun. Ringkasan lengkap: [`reports/hasil-dukascopy-2026-11-03.md`](reports/hasil-dukascopy-2026-11-03.md). Pencarian 3.780 variasi aturan (latih 2020–2023, uji 2024–2026) juga tidak menemukan aturan dengan win rate > 50% yang tetap untung di data uji: [`reports/pencarian-aturan-2026-11-03.md`](reports/pencarian-aturan-2026-11-03.md) (workflow `mtf-search.yml`). Strategi breakout sesi London (5.760 variasi) juga tidak menemukan aturan yang untung: [`reports/breakout-london-2026-11-03.md`](reports/breakout-london-2026-11-03.md). Workflow `mtf-backtest.yml` (Actions → Run workflow) mengulang pengujian dengan data terbaru.
 
 ### Cara membaca hasil
 
