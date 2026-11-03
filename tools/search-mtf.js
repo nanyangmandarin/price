@@ -4,36 +4,57 @@
  * Pencarian aturan multi-timeframe dengan disiplin latih/uji.
  *   node tools/search-mtf.js --dir data              (butuh data/XAUUSD_M30.csv, EURUSD, GBPUSD, AUDUSD; UTC)
  *   node tools/search-mtf.js --demo                  (data sintetis, hanya untuk menguji skrip)
+ *   --base h4   → pemicu di H4 dengan bias W1 & setup D1 (default: pemicu 30m, setup 4H, bias 1D)
+ *   --mode path → seleksi memakai urutan intrabar optimis (default konservatif)
  *
  * Protokol (ditetapkan sebelum melihat hasil):
  *  - Latih: 2020-01-01 s/d 2023-12-31. Uji: 2024-01-01 s/d akhir data (tidak dipakai saat memilih).
  *  - Satu konfigurasi yang sama untuk semua instrumen.
  *  - Lolos latih: >= 150 trade, win rate > 50%, rata-rata R > 0 (setelah spread).
  *  - 10 kandidat teratas (diurutkan menurut t-stat rata-rata R di data latih) dilaporkan SEMUA di data uji.
- *  - Bertahan meyakinkan di uji: win > 50%, avgR > 0, dan t-stat >= 2. Positif tapi t < 2 = tidak signifikan (bisa noise).
+ *  - Bertahan meyakinkan di uji: win > 50%, avgR > 0, dan t-stat >= 2,6 (Bonferroni untuk 10 kandidat). Positif tapi t < 2 = tidak signifikan (bisa noise).
  */
 const fs = require('fs');
 const path = require('path');
 const PA = require('../engine.js');
 
 const arg = (k, d) => { const i = process.argv.indexOf('--' + k); return i < 0 ? d : (process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : true); };
-const INST = [['XAUUSD', 3], ['EURUSD', 1], ['GBPUSD', 1.2], ['AUDUSD', 1.2]];
+const INST = [['XAUUSD', 3, 1], ['EURUSD', 1, 0.2], ['GBPUSD', 1.2, 0.2], ['AUDUSD', 1.2, 0.2]]; // [simbol, spread pip, slippage pip]
+const BASE = arg('base', 'm30') === 'h4' ? 'h4' : 'm30';
+const MODE = arg('mode', 'conservative') === 'path' ? 'path' : 'conservative';
+const MAX_HOLD = BASE === 'h4' ? 30 : 96; // H4: 30 candle ≈ 5 hari; 30m: 96 candle = 2 hari
+const H4_OPTS = {
+  tfMs: { base: 4 * 3600000, mid: 24 * 3600000, top: 7 * 24 * 3600000 },
+  tfNames: { top: '1W', mid: '1D', base: '4H' },
+  anchorMs: 22 * 3600000, anchorTopMs: PA.WEEK_ANCHOR_MS, minBarsMid: 2, minBarsTop: 2,
+};
 const TRAIN_FROM = PA.toEpoch(arg('from', '2020-01-01'));
 const SPLIT = PA.toEpoch(arg('split', '2024-01-01'));
 const MIN_N = Number(arg('min-n', 150));
+// Ambang signifikansi di data uji: koreksi Bonferroni untuk 10 kandidat (α = 0,05 satu sisi → t ≥ 2,6).
+// Uji nol pada random walk menunjukkan t ≥ 2 saja masih meloloskan kandidat palsu (±17% peluang di antara 10).
+const SIG_T = 2.6;
 
 /* ---------------- data & event ---------------- */
 const t0 = Date.now();
-const data = INST.map(([sym, spreadPips], k) => {
+const data = INST.map(([sym, spreadPips, slipPips], k) => {
   const inst = PA.INSTRUMENTS[sym];
   let m30;
   if (arg('demo')) m30 = PA.generateDemo('mixed', sym, Number(arg('bars', 60000)), 11 + k, { stepMin: 30 });
   else m30 = PA.parseCSV(fs.readFileSync(path.join(arg('dir', 'data'), sym + '_M30.csv'), 'utf8')).candles;
   const spread = spreadPips * inst.pipSize;
-  const ctx = PA.prepareMTF({ m30 }, { spread, anchorMs: 22 * 3600000, dp: PA.inferPrecision(m30) });
+  const slip = slipPips * inst.pipSize;
+  let ctx;
+  if (BASE === 'h4') {
+    m30.forEach((c) => { c.ts = PA.toEpoch(c.t); });
+    const h4 = PA.resample(m30, 4 * 3600000, { anchorMs: 22 * 3600000, minBars: 2 });
+    ctx = PA.prepareMTF({ m30: h4 }, Object.assign({ spread, slip, dp: PA.inferPrecision(m30) }, H4_OPTS));
+  } else {
+    ctx = PA.prepareMTF({ m30 }, { spread, slip, anchorMs: 22 * 3600000, dp: PA.inferPrecision(m30) });
+  }
   const ev = PA.mtfEvents(ctx).filter((e) => e.ts >= TRAIN_FROM);
-  console.log(sym + ': ' + ctx.M.length + ' candle 30m, ' + ev.length + ' kandidat sinyal (' + Math.round((Date.now() - t0) / 1000) + ' dtk)');
-  return { sym, M: ctx.M, ev, spread };
+  console.log(sym + ': ' + ctx.M.length + ' candle ' + ctx.TN.base + ' (' + ctx.TN.top + ' → ' + ctx.TN.mid + ' → ' + ctx.TN.base + '), ' + ev.length + ' kandidat sinyal (' + Math.round((Date.now() - t0) / 1000) + ' dtk)');
+  return { sym, M: ctx.M, ev, spread, slip };
 });
 
 /* ---------------- ruang pencarian ---------------- */
@@ -41,7 +62,7 @@ const configs = [];
 for (const thr of [5, 6, 7, 8, 9])
   for (const align of ['none', 'd1', 'd1h4'])
     for (const loc of [0, 1])
-      for (const sess of ['all', 'lnny'])
+      for (const sess of (BASE === 'h4' ? ['all'] : ['all', 'lnny']))
         for (const pat of ['all', 'pinbar', 'engulfing'])
           for (const entry of ['stop', 'market'])
             for (const sl of ['pattern', 'atr1.5'])
@@ -91,7 +112,7 @@ const stat = (A) => {
   return { n: A.n, win: A.n ? A.w / A.n : 0, lo: w.lo, hi: w.hi, avgR: m, t: sd > 0 ? m / (sd / Math.sqrt(A.n)) : 0, totalR: A.s };
 };
 
-function run(c, keepTrades) {
+function run(c, keepTrades, mode) {
   const res = data.map((d) => {
     const tr = newAcc();
     const te = newAcc();
@@ -101,7 +122,7 @@ function run(c, keepTrades) {
       if (e.i < next || !pass(c, e)) continue;
       const plan = planFor(c, e);
       if (!plan) continue;
-      const r = PA.simulate(d.M, e.i, e.dir > 0 ? 'BUY' : 'SELL', plan, { spread: d.spread }, { fillWindow: 3, maxHold: 96 });
+      const r = PA.simulate(d.M, e.i, e.dir > 0 ? 'BUY' : 'SELL', plan, { spread: d.spread, slip: d.slip, intrabar: mode || MODE }, { fillWindow: 3, maxHold: MAX_HOLD });
       next = r.next;
       if (!r.trade) continue;
       addAcc(e.ts < SPLIT ? tr : te, r.trade.R);
@@ -115,7 +136,8 @@ function run(c, keepTrades) {
 /* ---------------- jalankan ---------------- */
 const t1 = Date.now();
 const all = configs.map((c) => run(c, false));
-console.log('\n' + configs.length + ' konfigurasi diuji dalam ' + Math.round((Date.now() - t1) / 1000) + ' dtk. Latih: ' + PA.fmtEpoch(TRAIN_FROM).slice(0, 10) + ' s/d ' + PA.fmtEpoch(SPLIT - 1).slice(0, 10) + ', uji: sejak ' + PA.fmtEpoch(SPLIT).slice(0, 10));
+console.log('\nPemicu: ' + BASE.toUpperCase() + ' · biaya: spread + slippage · urutan intrabar: ' + (MODE === 'path' ? 'LINTASAN (batas atas, optimis)' : 'konservatif (batas bawah)') + ' · maks ' + MAX_HOLD + ' candle');
+console.log(configs.length + ' konfigurasi diuji dalam ' + Math.round((Date.now() - t1) / 1000) + ' dtk. Latih: ' + PA.fmtEpoch(TRAIN_FROM).slice(0, 10) + ' s/d ' + PA.fmtEpoch(SPLIT - 1).slice(0, 10) + ', uji: sejak ' + PA.fmtEpoch(SPLIT).slice(0, 10));
 
 const f = (x) => (x * 100).toFixed(1) + '%';
 const fr = (x) => (x >= 0 ? '+' : '') + x.toFixed(3);
@@ -139,14 +161,27 @@ top.forEach((x, k) => {
   const ss = stat(x.test);
   console.log('\n#' + (k + 1) + ' ' + label(x.c));
   console.log('  latih: ' + line(st));
-  const verdict = ss.win > 0.5 && ss.avgR > 0 ? (ss.t >= 2 ? '   ✓ BERTAHAN (signifikan)' : '   ~ positif tapi tidak signifikan') : '   ✗ tidak bertahan';
+  const verdict = ss.win > 0.5 && ss.avgR > 0 ? (ss.t >= SIG_T ? '   ✓ BERTAHAN (signifikan)' : '   ~ positif tapi tidak signifikan') : '   ✗ tidak bertahan';
   console.log('  uji  : ' + line(ss) + verdict);
+  const other = MODE === 'path' ? 'conservative' : 'path';
+  console.log('  uji (mode ' + (other === 'path' ? 'lintasan, batas atas' : 'konservatif, batas bawah') + '): ' + line(stat(run(x.c, false, other).test)));
   console.log('  uji per instrumen: ' + x.res.map((r) => { const s = stat(r.te); return r.sym + ' n' + s.n + ' ' + f(s.win) + ' ' + fr(s.avgR); }).join(' | '));
 });
 
 const pos = top.filter((x) => { const s = stat(x.test); return s.win > 0.5 && s.avgR > 0; });
-const sig = pos.filter((x) => stat(x.test).t >= 2);
-console.log('\nRINGKASAN: dari ' + top.length + ' kandidat, ' + pos.length + ' tetap win>50% & avgR>0 di data uji; ' + sig.length + ' di antaranya signifikan (t≥2).');
+const sig = pos.filter((x) => stat(x.test).t >= SIG_T);
+console.log('\nRINGKASAN: dari ' + top.length + ' kandidat, ' + pos.length + ' tetap win>50% & avgR>0 di data uji; ' + sig.length + ' di antaranya signifikan (t≥' + SIG_T + ', Bonferroni).');
+
+const bestExp = all.filter((x) => stat(x.train).n >= MIN_N).sort((a, b) => stat(b.train).t - stat(a.train).t).slice(0, 5);
+console.log('\n=== 5 TERATAS menurut ekspektasi saja (tanpa syarat win rate), dipilih dari data latih ===');
+bestExp.forEach((x, k) => {
+  const ss = stat(x.test);
+  console.log('#' + (k + 1) + ' ' + label(x.c));
+  console.log('  latih: ' + line(stat(x.train)));
+  console.log('  uji  : ' + line(ss) + (ss.avgR > 0 && ss.t >= SIG_T ? '   ✓ signifikan' : ss.avgR > 0 ? '   ~ positif, tidak signifikan' : '   ✗'));
+  console.log('  uji per instrumen: ' + x.res.map((r) => { const s = stat(r.te); return r.sym + ' n' + s.n + ' ' + f(s.win) + ' ' + fr(s.avgR); }).join(' | '));
+});
+console.log('Untung di latih apa pun win rate-nya (avgR>0, t≥2): ' + all.filter((x) => { const s = stat(x.train); return s.n >= MIN_N && s.avgR > 0 && s.t >= 2; }).length);
 
 // Rincian per tahun untuk kandidat #1 (stabilitas)
 if (top.length) {

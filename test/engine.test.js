@@ -450,3 +450,53 @@ test('mode path: low sebelum fill tidak dihitung sebagai SL (candle naik O→L�
   assert.equal(r2.trade.outcome, 'TP');
   assert.equal(r2.trade.exitIdx, 1);
 });
+
+/* ===== Multi-timeframe dengan H4 sebagai pemicu (W1 → D1 → H4) ===== */
+const H4cfg = () => ({
+  tfMs: { base: 4 * 3600000, mid: 24 * 3600000, top: 7 * 24 * 3600000 },
+  tfNames: { top: '1W', mid: '1D', base: '4H' },
+  anchorMs: 22 * 3600000, anchorTopMs: PA.WEEK_ANCHOR_MS, minBarsMid: 2, minBarsTop: 2,
+});
+const toH4 = (m30) => { m30.forEach((c) => { c.ts = PA.toEpoch(c.t); }); return PA.resample(m30, 4 * 3600000, { anchorMs: 22 * 3600000, minBars: 2 }); };
+
+test('H4: candle 1D/1W hanya dipakai setelah close; minggu mulai Minggu 22:00 UTC', () => {
+  const H4 = toH4(M30('mixed', 'XAUUSD', 60000, 4));
+  const ctx = PA.prepareMTF({ m30: H4 }, H4cfg());
+  for (const w of ctx.D.slice(0, 20)) assert.equal(new Date(w.ts).getUTCDay(), 0), assert.equal(new Date(w.ts).getUTCHours(), 22);
+  for (let i = 0; i < ctx.M.length; i += 5) {
+    const close = ctx.M[i].ts + 4 * 3600000;
+    const hi = ctx.hIdx[i], di = ctx.dIdx[i];
+    if (hi >= 0) assert.ok(ctx.H[hi].ts + 24 * 3600000 <= close);
+    if (hi + 1 < ctx.H.length) assert.ok(ctx.H[hi + 1].ts + 24 * 3600000 > close);
+    if (di >= 0) assert.ok(ctx.D[di].ts + 7 * 24 * 3600000 <= close);
+    if (di + 1 < ctx.D.length) assert.ok(ctx.D[di + 1].ts + 7 * 24 * 3600000 > close);
+  }
+});
+
+test('H4: tanpa look-ahead & simetri cermin', () => {
+  const H4 = toH4(M30('mixed', 'XAUUSD', 60000, 9));
+  const full = PA.prepareMTF({ m30: H4.map((c) => ({ ...c })) }, H4cfg());
+  let compared = 0;
+  for (const i of [Math.floor(H4.length * 0.6), Math.floor(H4.length * 0.8), H4.length - 2]) {
+    const cut = PA.prepareMTF({ m30: H4.slice(0, i + 1).map((c) => ({ ...c })) }, H4cfg());
+    const a = PA.analyzeMTFAt(full, i, false);
+    const b = PA.analyzeMTFAt(cut, i, false);
+    assert.equal(a.ok, b.ok);
+    if (!a.ok) continue;
+    assert.equal(a.score, b.score);
+    assert.deepEqual(a.breakdown, b.breakdown);
+    assert.match(a.breakdown[0].label, /^1W /);
+    compared++;
+  }
+  assert.ok(compared >= 2);
+  const K = 6000;
+  const r2 = (x) => Number(x.toFixed(2));
+  const mir = PA.prepareMTF({ m30: H4.map((c) => ({ t: c.t, ts: c.ts, o: r2(K - c.o), h: r2(K - c.l), l: r2(K - c.h), c: r2(K - c.c) })) }, H4cfg());
+  const base = PA.prepareMTF({ m30: H4.map((c) => ({ t: c.t, ts: c.ts, o: r2(c.o), h: r2(c.h), l: r2(c.l), c: r2(c.c) })) }, H4cfg());
+  for (let i = Math.floor(H4.length * 0.5); i < H4.length; i++) {
+    const a = PA.analyzeMTFAt(base, i, false);
+    const b = PA.analyzeMTFAt(mir, i, false);
+    if (!a.ok) continue;
+    assert.ok(a.score === -b.score, 'skor @' + i);
+  }
+});

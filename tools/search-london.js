@@ -5,7 +5,7 @@
  *   node tools/search-london.js --dir data     (data/XAUUSD_M30.csv, EURUSD, GBPUSD, AUDUSD; waktu UTC)
  *   node tools/search-london.js --demo         (data sintetis untuk menguji skrip)
  * Latih 2020–2023, uji 2024–akhir data. Satu konfigurasi untuk keempat instrumen.
- * Lolos latih: >= 150 trade, win > 50%, rata-rata R > 0. Bertahan di uji: win > 50%, rata-rata R > 0, t >= 2.
+ * Lolos latih: >= 150 trade, win > 50%, rata-rata R > 0. Bertahan di uji: win > 50%, rata-rata R > 0, t >= 2,6 (Bonferroni).
  * Biaya: spread + slippage (XAU 1 pip, forex 0,2 pip) pada entri & exit SL.
  * Urutan intrabar: seleksi & penilaian memakai mode KONSERVATIF (batas bawah); mode lintasan dilaporkan sebagai batas atas.
  */
@@ -19,6 +19,9 @@ const INST = [['XAUUSD', 3, 1], ['EURUSD', 1, 0.2], ['GBPUSD', 1.2, 0.2], ['AUDU
 const FROM = PA.toEpoch(arg('from', '2020-01-01'));
 const SPLIT = PA.toEpoch(arg('split', '2024-01-01'));
 const MIN_N = Number(arg('min-n', 150));
+// Ambang signifikansi di data uji: koreksi Bonferroni untuk 10 kandidat (α = 0,05 satu sisi → t ≥ 2,6).
+// Uji nol pada random walk menunjukkan t ≥ 2 saja masih meloloskan kandidat palsu (±17% peluang di antara 10).
+const SIG_T = 2.6;
 const MODE = arg('mode', 'conservative') === 'path' ? 'path' : 'conservative'; // mode seleksi
 
 const t0 = Date.now();
@@ -95,7 +98,7 @@ console.log('\n=== 10 KANDIDAT TERATAS (dipilih HANYA dari data latih) — semua
 top.forEach((x, k) => {
   const st = stat(x.train);
   const ss = stat(x.test);
-  const verdict = ss.win > 0.5 && ss.avgR > 0 ? (ss.t >= 2 ? '   ✓ BERTAHAN (signifikan)' : '   ~ positif tapi tidak signifikan') : '   ✗ tidak bertahan';
+  const verdict = ss.win > 0.5 && ss.avgR > 0 ? (ss.t >= SIG_T ? '   ✓ BERTAHAN (signifikan)' : '   ~ positif tapi tidak signifikan') : '   ✗ tidak bertahan';
   console.log('\n#' + (k + 1) + ' ' + label(x.c));
   console.log('  latih: ' + line(st));
   console.log('  uji  : ' + line(ss) + verdict);
@@ -104,7 +107,7 @@ top.forEach((x, k) => {
   console.log('  uji per instrumen: ' + x.res.map((r) => { const s = stat(r.te); return r.sym + ' n' + s.n + ' ' + f(s.win) + ' ' + fr(s.avgR) + ' t' + s.t.toFixed(1); }).join(' | '));
 });
 const pos = top.filter((x) => { const s = stat(x.test); return s.win > 0.5 && s.avgR > 0; });
-console.log('\nRINGKASAN: dari ' + top.length + ' kandidat, ' + pos.length + ' tetap win>50% & avgR>0 di data uji; ' + pos.filter((x) => stat(x.test).t >= 2).length + ' signifikan (t≥2).');
+console.log('\nRINGKASAN: dari ' + top.length + ' kandidat, ' + pos.length + ' tetap win>50% & avgR>0 di data uji; ' + pos.filter((x) => stat(x.test).t >= SIG_T).length + ' signifikan (t≥' + SIG_T + ', Bonferroni).');
 
 // Sebagai pembanding: kandidat terbaik TANPA syarat win rate (murni ekspektasi), juga dipilih dari data latih
 const bestExp = all.filter((x) => stat(x.train).n >= MIN_N).sort((a, b) => stat(b.train).t - stat(a.train).t).slice(0, 5);
@@ -113,7 +116,7 @@ bestExp.forEach((x, k) => {
   const ss = stat(x.test);
   console.log('#' + (k + 1) + ' ' + label(x.c));
   console.log('  latih: ' + line(stat(x.train)));
-  console.log('  uji  : ' + line(ss) + (ss.avgR > 0 && ss.t >= 2 ? '   ✓ signifikan' : ss.avgR > 0 ? '   ~ positif, tidak signifikan' : '   ✗'));
+  console.log('  uji  : ' + line(ss) + (ss.avgR > 0 && ss.t >= SIG_T ? '   ✓ signifikan' : ss.avgR > 0 ? '   ~ positif, tidak signifikan' : '   ✗'));
 });
 
 if (top.length) {
