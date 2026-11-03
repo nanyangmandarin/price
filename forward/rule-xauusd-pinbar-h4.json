@@ -1,0 +1,23 @@
+{
+  "id": "xauusd-pinbar-h4-v1",
+  "locked_at": "2026-11-03T08:30:00Z",
+  "forward_from": "2026-11-03T22:00:00Z",
+  "instrument": "XAUUSD",
+  "data": "Dukascopy BID 30m (UTC), digabung: H4 mulai 22:00 UTC, D1 mulai 22:00 UTC, W1 mulai Minggu 22:00 UTC",
+  "timeframes": { "bias": "1W", "setup": "1D", "trigger": "4H" },
+  "rule": {
+    "minScore": 7,
+    "requireTopTrendAligned": true,
+    "requireLocation": false,
+    "pattern": "pinbar",
+    "entry": "market pada open candle H4 berikutnya (maks 3 candle)",
+    "slAtr": 1.5,
+    "tpR": 0.5,
+    "maxHoldBars": 30,
+    "fillWindow": 3
+  },
+  "costs": { "spreadPips": 3, "slipPips": 1, "intrabar": "conservative" },
+  "selection": "Kandidat #1 pencarian H4 (Actions run 41600912580), dipilih hanya dari data latih 2020–2023 untuk 4 instrumen. Dibatasi ke XAU/USD karena pin bar emas berulang kali positif di data uji 2024–2026 — pengamatan SETELAH melihat data uji, jadi ini hipotesis yang diuji maju.",
+  "evaluation": "Dievaluasi setiap 25 trade maju yang selesai. Hipotesis DITOLAK bila batas atas CI 95% rata-rata R < 0. Edge kecil (sekitar +0,08 R/trade) baru bisa dibuktikan signifikan setelah ratusan trade; uji maju ini terutama mendeteksi aturan yang rusak.",
+  "note": "Jangan ubah file ini. Perubahan aturan = aturan baru dengan id dan forward_from baru (riwayat git menjadi bukti)."
+}

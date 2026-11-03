@@ -73,6 +73,10 @@ File 4H/1D sendiri boleh diunggah, tetapi harus dari sumber dan zona waktu yang 
 
 Aturan Normal (skor ≥ 7) diuji di XAU/USD, EUR/USD, GBP/USD, AUD/USD dan **tidak menunjukkan edge**: ekspektasi −0,02 sampai −0,18 R per trade setelah spread, dan tidak stabil antar tahun. Ringkasan lengkap: [`reports/hasil-dukascopy-2026-11-03.md`](reports/hasil-dukascopy-2026-11-03.md). Pencarian 3.780 variasi aturan (latih 2020–2023, uji 2024–2026) juga tidak menemukan aturan dengan win rate > 50% yang tetap untung di data uji: [`reports/pencarian-aturan-2026-11-03.md`](reports/pencarian-aturan-2026-11-03.md) (workflow `mtf-search.yml`). Strategi breakout sesi London (5.760 variasi) juga tidak menemukan aturan yang untung: [`reports/breakout-london-2026-11-03.md`](reports/breakout-london-2026-11-03.md). Versi H4 (bias W1, setup D1, pemicu H4; 1.890 variasi) mendekati impas tetapi juga tanpa edge yang bertahan: [`reports/h4-2026-11-03.md`](reports/h4-2026-11-03.md). Workflow `mtf-backtest.yml` (Actions → Run workflow) mengulang pengujian dengan data terbaru.
 
+### Uji maju (berjalan)
+
+Aturan pin bar emas H4 dikunci pada 3 Nov 2026 ([`forward/rule-xauusd-pinbar-h4.json`](forward/rule-xauusd-pinbar-h4.json)) dan diuji maju setiap hari kerja oleh workflow `forward-test.yml`. Hasilnya tercatat tambah-saja di [`forward/README.md`](forward/README.md) dan tampil di kartu "Uji maju" pada aplikasi. Dengan sekitar 25 sinyal per tahun, evaluasi pertama (25 trade) baru bisa dilakukan kira-kira setahun lagi.
+
 ### Cara membaca hasil
 
 - **Win rate dengan CI 95% (Wilson)** dibandingkan dengan **win rate impas**. Win rate tinggi belum berarti untung bila rata-rata kalah lebih besar dari rata-rata menang.

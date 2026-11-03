@@ -4,7 +4,7 @@
   "description": "Alat bantu keputusan trading forex & gold berbasis price action",
   "private": true,
   "scripts": {
-    "test": "node --test test/engine.test.js test/london.test.js",
+    "test": "node --test test/engine.test.js test/london.test.js test/forward.test.js",
     "start": "python3 -m http.server 8080"
   },
   "license": "MIT"

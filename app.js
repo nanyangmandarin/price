@@ -854,6 +854,38 @@
     if (o.n) drawEquity(o.equity, 'eqM');
   }
 
+  /* ------------------------------ uji maju ------------------------------ */
+  function renderForward() {
+    const el = $('fwdOut');
+    if (!el) return;
+    if (!window.fetch || location.protocol === 'file:') {
+      el.innerHTML = '<p class="hint">Catatan uji maju tampil saat aplikasi dibuka lewat GitHub Pages. Bisa juga dilihat di <code>forward/README.md</code> pada repositori.</p>';
+      return;
+    }
+    fetch('forward/xauusd-pinbar-h4.json', { cache: 'no-store' })
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then((d) => {
+        const p = (x) => (x == null ? '—' : (x * 100).toFixed(1) + '%');
+        const r = (x) => (x == null ? '—' : (x >= 0 ? '+' : '') + x.toFixed(3));
+        const row = (lab, s) => '<tr><td>' + lab + '</td><td>' + (s.n || 0) + '</td><td>' + (s.n ? p(s.winRate) + ' (' + p(s.winLo) + '–' + p(s.winHi) + ')' : '—') + '</td><td>' + (s.n ? r(s.avgR) : '—') + '</td><td>' + (s.n ? r(s.totalR) : '—') + '</td><td>' + (s.n ? p(s.breakEven) : '—') + '</td></tr>';
+        let h = '<div class="verdict">' + esc(d.verdict) + '</div>' +
+          '<p class="hint">Diperbarui ' + esc(d.updated) + ' · candle H4 terakhir ' + esc(d.lastBar) + ' · uji maju sejak ' + esc(d.forward_from.replace('T', ' ').replace(':00Z', ' UTC')) + '</p>' +
+          '<div class="tbl-wrap"><table class="tr"><thead><tr><th></th><th>Trade</th><th>Win rate (CI 95%)</th><th>Rata-rata R</th><th>Total R</th><th>Win rate impas</th></tr></thead><tbody>' +
+          row('<b>Uji maju</b>', d.forwardSummary) + row('Referensi latih 2020–2023', d.reference.train) + row('Referensi uji 2024–Nov 2026', d.reference.test) + '</tbody></table></div>';
+        if (d.pending) h += '<p class="prob">Sinyal menunggu entri: <b>' + d.pending.side + '</b> · sinyal ' + esc(d.pending.signalTime) + ' · SL ' + d.pending.sl.toFixed(2) + '</p>';
+        d.open.forEach((t) => { h += '<p class="prob">Posisi terbuka: <b>' + t.side + '</b> @ ' + t.entry.toFixed(2) + ' · SL ' + t.sl.toFixed(2) + ' · TP ' + t.tp.toFixed(2) + ' · sementara ' + r(t.unrealizedR) + ' R</p>'; });
+        const last = d.forward.slice(-10).reverse();
+        if (last.length) {
+          h += '<div class="tbl-wrap"><table class="tr"><thead><tr><th>Sinyal</th><th>Arah</th><th>Entri</th><th>Status</th><th>Hasil</th><th>R</th></tr></thead><tbody>' +
+            last.map((t) => '<tr><td>' + esc(t.signalTime) + '</td><td>' + t.side + '</td><td>' + t.entry.toFixed(2) + '</td><td>' + t.status + '</td><td>' + (t.outcome || '—') + '</td><td class="' + ((t.R != null ? t.R : t.unrealizedR) > 0 ? 'tp' : 'sl') + '">' + (t.R != null ? r(t.R) : '(' + r(t.unrealizedR) + ')') + '</td></tr>').join('') + '</tbody></table></div>';
+        }
+        el.innerHTML = h;
+      })
+      .catch(() => {
+        el.innerHTML = '<p class="hint">Catatan uji maju belum tersedia di sini. Buka aplikasi lewat GitHub Pages, atau lihat <code>forward/README.md</code> di repositori.</p>';
+      });
+  }
+
   /* ------------------------------ init ------------------------------ */
   function init() {
     fillInst();
@@ -864,6 +896,7 @@
     if (state.source === 'demo') state.candles = PA.generateDemo(state.demoKind, state.inst, 400, state.demoSeed);
     state.cut = state.candles.length - 1;
     recomputeAll();
+    renderForward();
   }
   init();
 })();
