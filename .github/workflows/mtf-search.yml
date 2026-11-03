@@ -1,0 +1,39 @@
+name: Pencarian aturan multi-timeframe
+
+# Memakai ulang data 30m dari run "Backtest multi-timeframe" (artefak hasil-*, disimpan 14 hari),
+# lalu menjalankan tools/search-mtf.js (latih 2020–2023, uji 2024–sekarang). Hasil ada di log & ringkasan job.
+on:
+  workflow_dispatch:
+    inputs:
+      data_run_id:
+        description: "ID run mtf-backtest.yml yang artefak datanya dipakai"
+        default: "41561545932"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Tes mesin
+        run: npm test
+      - name: Ambil data dari run sebelumnya
+        uses: actions/download-artifact@v4
+        with:
+          pattern: hasil-*
+          merge-multiple: true
+          path: .
+          run-id: ${{ inputs.data_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pencarian
+        run: |
+          ls -la data
+          node tools/search-mtf.js --dir data | tee search.txt
+          { echo '```'; cat search.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

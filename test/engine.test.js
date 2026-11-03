@@ -403,3 +403,35 @@ test('checkAlignment: mendeteksi zona waktu tidak sinkron', () => {
   const shifted = h.map((c) => ({ ...c, ts: c.ts + 3 * 3600000 }));
   assert.ok(PA.checkAlignment(m, shifted, 4 * 3600000) < 0.3);
 });
+
+test('simulate: tpR menghitung TP dari harga isi aktual (entri market)', () => {
+  const cs = [C(10, 10.2, 9.8, 10), C(10.5, 10.6, 10.4, 10.55), C(10.55, 11.2, 10.5, 11.1)];
+  // BUY market: entry -Infinity → isi di open candle berikutnya (10.5); SL 10.0 → risiko 0.5; TP 1R = 11.0
+  const r = PA.simulate(cs, 0, 'BUY', { entry: -Infinity, sl: 10, tpR: 1 }, { spread: 0 }, { fillWindow: 1, maxHold: 5 });
+  assert.equal(r.trade.entry, 10.5);
+  assert.equal(r.trade.tp, 11);
+  assert.equal(r.trade.outcome, 'TP');
+  assert.ok(Math.abs(r.trade.R - 1) < 1e-9);
+  const s = PA.simulate(cs.map((c) => ({ t: c.t, o: 20 - c.o, h: 20 - c.l, l: 20 - c.h, c: 20 - c.c })), 0, 'SELL', { entry: Infinity, sl: 10, tpR: 1 }, { spread: 0 }, { fillWindow: 1, maxHold: 5 });
+  assert.equal(s.trade.outcome, 'TP');
+  assert.ok(Math.abs(s.trade.R - 1) < 1e-9);
+});
+
+test('mtfEvents: arah, komponen, dan rencana level konsisten', () => {
+  const ctx = PA.prepareMTF({ m30: M30('mixed', 'XAUUSD', 8000, 3) }, { spread: 0.3 });
+  const ev = PA.mtfEvents(ctx);
+  assert.ok(ev.length > 50);
+  for (const e of ev) {
+    assert.ok(e.score > 0 && (e.dir === 1 || e.dir === -1));
+    assert.ok(e.trig >= 2 && e.hi >= e.lo && e.atr > 0);
+    assert.ok(e.hour >= 0 && e.hour < 24);
+    if (e.dir > 0) assert.ok(e.lvl.sl < e.lvl.entry); else assert.ok(e.lvl.sl > e.lvl.entry);
+  }
+  // ctx.o dipulihkan
+  assert.equal(ctx.o.mtfThreshold, 7);
+  // setiap sinyal backtest standar harus ada di daftar event (sinyal ⊆ event)
+  return PA.backtestMTF(ctx).then((bt) => {
+    const set = new Set(ev.map((e) => e.i));
+    for (const s of bt.signals) assert.ok(set.has(s.i), 'sinyal ' + s.i + ' tidak ada di event');
+  });
+});

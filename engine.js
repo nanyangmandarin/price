@@ -482,7 +482,8 @@
   function simulate(candles, i, side, plan, o, c2) {
     const n = candles.length;
     const dir = side === 'BUY' ? 1 : -1;
-    const { entry, sl, tp1 } = plan;
+    const { entry, sl } = plan;
+    let tp1 = plan.tp1;
 
     // 1) tunggu entry stop terpicu dalam jendela fillWindow
     let fillIdx = -1;
@@ -502,6 +503,8 @@
 
     const risk = dir * (fillPx - sl);
     if (!(risk > 0)) return { trade: null, next: fillIdx + 1 };
+    // plan.tpR: TP = kelipatan risiko dari harga isi sebenarnya (untuk entri market / pencarian aturan keluar)
+    if (plan.tpR != null) tp1 = fillPx + dir * plan.tpR * risk;
 
     // 2) kelola posisi: SL dulu bila SL & TP di candle yang sama (konservatif)
     let exitIdx = -1;
@@ -1086,6 +1089,49 @@
     };
   }
 
+
+  // Semua kandidat sinyal (bar 30m yang punya pemicu searah skor), lengkap dengan komponen skor,
+  // agar ribuan variasi filter & aturan keluar bisa diuji cepat tanpa menganalisis ulang.
+  function mtfEvents(ctx) {
+    const saved = ctx.o;
+    ctx.o = Object.assign({}, saved, { mtfThreshold: Infinity });
+    ctx.memo = { h: { idx: -2, a: null }, d: { idx: -2, a: null } };
+    const M = ctx.M;
+    const out = [];
+    try {
+      for (let i = 0; i < M.length - 1; i++) {
+        if (ctx.hIdx[i] < ctx.o.minCandles - 1 || ctx.dIdx[i] < ctx.o.minCandles - 1) continue;
+        const a = analyzeMTFAt(ctx, i, true);
+        if (!a.ok || a.quick) continue;
+        const S = a.score;
+        if (!S) continue;
+        const dir = S > 0 ? 1 : -1;
+        const sig = a.layers.m30.patterns
+          .filter((p) => p.bias === (dir > 0 ? 'bull' : 'bear') && p.quality >= 2)
+          .sort((x, y) => y.quality - x.quality)[0];
+        if (!sig) continue;
+        const pts = {};
+        a.breakdown.forEach((b) => { pts[b.label] = b.pts * dir; });
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (let j = i - sig.span + 1; j <= i; j++) { lo = Math.min(lo, M[j].l); hi = Math.max(hi, M[j].h); }
+        const levels = a.layers.d1.levels.map((l) => Object.assign({ tf: 'd' }, l)).concat(a.layers.h4.levels.map((l) => Object.assign({ tf: 'h' }, l)));
+        const lp = buildPlan(dir > 0 ? 'BUY' : 'SELL', M, i, sig, a.atr, levels, saved);
+        out.push({
+          i, ts: M[i].ts, dir, score: S * dir,
+          d1: pts['1D struktur'], d1e: pts['1D EMA 20'], h4: pts['4H struktur'], h4e: pts['4H EMA 20'],
+          trig: sig.quality, key: sig.key, conf: pts['Konfirmasi 4H/1D'], loc: pts['Lokasi'],
+          lo, hi, close: M[i].c, atr: a.atr, hour: new Date(M[i].ts + M30_MS).getUTCHours(),
+          lvl: { entry: lp.entry, sl: lp.sl, tp1: lp.tp1, rr1: lp.rr1, tooWide: lp.tooWide },
+        });
+      }
+    } finally {
+      ctx.o = saved;
+      ctx.memo = { h: { idx: -2, a: null }, d: { idx: -2, a: null } };
+    }
+    return out;
+  }
+
   // Backtest multi-timeframe (async agar UI tidak membeku). cfg.onProgress(0..1), cfg.cancel() → true untuk berhenti.
   async function backtestMTF(ctx, cfg) {
     const o = ctx.o;
@@ -1203,6 +1249,6 @@
     analyze, analyzeAt, backtest, tradeStats, positionSize, pipValueUSD,
     parseCSV, inferPrecision, generateDemo,
     simulate, toEpoch, fmtEpoch, resample, checkAlignment, prepareMTF, analyzeMTFAt, backtestMTF,
-    wilson, groupStats, summarizeMTF, probabilityForScore, MTF_DEFAULTS,
+    wilson, groupStats, summarizeMTF, probabilityForScore, MTF_DEFAULTS, mtfEvents,
   };
 });
