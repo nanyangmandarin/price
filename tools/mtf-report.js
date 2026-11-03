@@ -5,7 +5,8 @@
  *
  *   node tools/mtf-report.js --m30 data/XAUUSD_M30.csv --inst XAUUSD --spread 3 --from 2020-01-01
  *   (opsional) --h4 data/XAUUSD_H4.csv --d1 data/XAUUSD_D1.csv   → bila tidak ada, diturunkan dari 30m
- *   (opsional) --threshold 7 --minrr 1.5 --json hasil.json
+ *   (opsional) --threshold 7 --minrr 1.5 --anchor 22 --json hasil.json
+ *   --anchor: jam awal hari untuk menurunkan 4H/1D dari 30m (data UTC → 22 agar hari FX bermula ±22:00 UTC)
  */
 const fs = require('fs');
 const PA = require('../engine.js');
@@ -30,7 +31,7 @@ const HEAD = pad('', 10) + pad('Trade', 7) + pad('Win', 9) + pad('CI 95%', 16) +
 (async () => {
   const a = args();
   if (!a.m30) {
-    console.error('Pemakaian: node tools/mtf-report.js --m30 file.csv [--h4 file.csv] [--d1 file.csv] [--inst XAUUSD] [--spread 3] [--from 2020-01-01] [--threshold 7] [--minrr 1.5] [--json out.json]');
+    console.error('Pemakaian: node tools/mtf-report.js --m30 file.csv [--h4 file.csv] [--d1 file.csv] [--inst XAUUSD] [--spread 3] [--from 2020-01-01] [--threshold 7] [--minrr 1.5] [--anchor 22] [--json out.json]');
     process.exit(1);
   }
   const inst = PA.INSTRUMENTS[(a.inst || 'XAUUSD').toUpperCase()];
@@ -46,6 +47,7 @@ const HEAD = pad('', 10) + pad('Trade', 7) + pad('Win', 9) + pad('CI 95%', 16) +
     minRR: a.minrr ? Number(a.minrr) : 1.5,
     mtfThreshold: a.threshold ? Number(a.threshold) : 7,
     dp: PA.inferPrecision(m30.candles),
+    anchorMs: (a.anchor ? Number(a.anchor) : 0) * 3600000,
   };
   const ctx = PA.prepareMTF({ m30: m30.candles, h4: h4 && h4.candles, d1: d1 && d1.candles }, opts);
   if (h4) { const al = PA.checkAlignment(ctx.M, ctx.H, 4 * 3600000); console.log('Sinkron 4H↔30m: ' + pct(al) + (al < 0.9 ? '  ⚠ ZONA WAKTU TIDAK SINKRON — hasil tidak valid' : '')); }

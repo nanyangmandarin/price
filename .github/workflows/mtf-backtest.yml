@@ -1,0 +1,57 @@
+name: Backtest multi-timeframe (data Dukascopy)
+
+# Dijalankan manual: Actions → "Backtest multi-timeframe" → Run workflow.
+# Mengunduh candle 30m XAUUSD, EURUSD, GBPUSD, AUDUSD dari Dukascopy (2019-07 → sekarang),
+# menurunkan 4H/1D, lalu menjalankan backtest top-down sejak 2020-01-01.
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Uji mulai tanggal (YYYY-MM-DD)"
+        default: "2020-01-01"
+      threshold:
+        description: "Ambang skor: 9 ketat / 7 normal / 6 longgar"
+        default: "7"
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    name: ${{ matrix.inst }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { inst: XAUUSD, spread: "3" }
+          - { inst: EURUSD, spread: "1" }
+          - { inst: GBPUSD, spread: "1.2" }
+          - { inst: AUDUSD, spread: "1.2" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Pasang dukascopy-node
+        run: npm install --no-save dukascopy-node@1.51.1
+      - name: Tes mesin
+        run: npm test
+      - name: Unduh data 30m
+        run: node tools/fetch-dukascopy.js "${{ matrix.inst }}" 2019-07-01 "data/${{ matrix.inst }}_M30.csv"
+      - name: Backtest
+        run: |
+          mkdir -p reports
+          node tools/mtf-report.js --m30 "data/${{ matrix.inst }}_M30.csv" --inst "${{ matrix.inst }}" \
+            --spread "${{ matrix.spread }}" --from "${{ inputs.from }}" --threshold "${{ inputs.threshold }}" \
+            --anchor 22 --json "reports/${{ matrix.inst }}.json" | tee "reports/${{ matrix.inst }}.txt"
+          { echo '```'; cat "reports/${{ matrix.inst }}.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hasil-${{ matrix.inst }}
+          path: |
+            reports/
+            data/
+          retention-days: 14
