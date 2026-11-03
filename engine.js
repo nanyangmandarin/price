@@ -477,59 +477,107 @@
   /* ------------------------------------------------------------------ */
   /* Backtest (walk-forward, tanpa look-ahead)                           */
   /* ------------------------------------------------------------------ */
+  // Lintasan harga di dalam satu candle (heuristik standar): candle naik O→L→H→C, candle turun O→H→L→C.
+  function barPath(c) {
+    return c.c >= c.o ? [c.o, c.l, c.h, c.c] : [c.o, c.h, c.l, c.c];
+  }
+  // Telusuri lintasan dari harga `from` menuju pts[seg..]; kembalikan sentuhan SL/TP pertama ({hit, px}) atau null.
+  function scanPath(pts, seg, from, dir, sl, tp) {
+    let cur = from;
+    for (let s = seg; s < pts.length; s++) {
+      const nxt = pts[s];
+      if (nxt < cur) {
+        if (dir > 0 && nxt <= sl) return { hit: 'SL', px: Math.min(cur, sl) };
+        if (dir < 0 && tp != null && nxt <= tp) return { hit: 'TP', px: Math.min(cur, tp) };
+      } else if (nxt > cur) {
+        if (dir > 0 && tp != null && nxt >= tp) return { hit: 'TP', px: Math.max(cur, tp) };
+        if (dir < 0 && nxt >= sl) return { hit: 'SL', px: Math.max(cur, sl) };
+      }
+      cur = nxt;
+    }
+    return null;
+  }
+  // Mode konservatif: bila SL tersentuh di candle, dianggap kena lebih dulu (batas bawah hasil).
+  function consBar(c, dir, sl, tp) {
+    if (dir > 0 ? c.l <= sl : c.h >= sl) return { hit: 'SL', px: sl };
+    if (tp != null && (dir > 0 ? c.h >= tp : c.l <= tp)) return { hit: 'TP', px: tp };
+    return null;
+  }
+  // Kelola posisi terbuka mulai candle setelah j0 sampai lastIdx (inklusif). Kembalikan {exitIdx, exitPx, outcome}.
+  // mode 'conservative' (default, batas bawah) atau 'path' (lintasan O→L→H→C / O→H→L→C, cenderung optimis untuk entri stop).
+  function manageFrom(candles, j0, lastIdx, dir, sl, tp, mode) {
+    for (let j = j0 + 1; j <= lastIdx; j++) {
+      const c = candles[j];
+      if (dir > 0 ? c.o <= sl : c.o >= sl) return { exitIdx: j, exitPx: c.o, outcome: 'SL' };
+      if (tp != null && (dir > 0 ? c.o >= tp : c.o <= tp)) return { exitIdx: j, exitPx: c.o, outcome: 'TP' };
+      const r = mode === 'path' ? scanPath(barPath(c), 1, c.o, dir, sl, tp) : consBar(c, dir, sl, tp);
+      if (r) return { exitIdx: j, exitPx: r.px, outcome: r.hit };
+    }
+    return { exitIdx: lastIdx, exitPx: candles[lastIdx].c, outcome: 'Waktu' };
+  }
+  // Isi order stop (entry = -Infinity/Infinity berarti market di open) pada candle c, memakai lintasan intrabar.
+  // Kembalikan {fill, seg} (titik lanjut lintasan), {cancel:true} bila SL tersentuh lebih dulu, atau null bila tidak terpicu.
+  function fillStop(c, dir, entry, sl, mode) {
+    if (dir > 0 ? c.o >= entry : c.o <= entry) return { fill: c.o, seg: 1 };
+    if (mode !== 'path') {
+      if (dir > 0 ? c.h >= entry : c.l <= entry) return { fill: entry, seg: 1 };
+      if (sl != null && (dir > 0 ? c.l <= sl : c.h >= sl)) return { cancel: true };
+      return null;
+    }
+    const pts = barPath(c);
+    let cur = pts[0];
+    for (let s = 1; s < pts.length; s++) {
+      const nxt = pts[s];
+      if (dir > 0) {
+        if (nxt < cur && sl != null && nxt <= sl) return { cancel: true };
+        if (nxt > cur && nxt >= entry) return { fill: entry, seg: s };
+      } else {
+        if (nxt > cur && sl != null && nxt >= sl) return { cancel: true };
+        if (nxt < cur && nxt <= entry) return { fill: entry, seg: s };
+      }
+      cur = nxt;
+    }
+    return null;
+  }
+
   // Simulasi satu trade dari sinyal di indeks i. Mengembalikan { trade, next }.
   // trade = null bila order tidak terisi / tidak valid; next = indeks berikutnya yang boleh dianalisis.
+  // Urutan sentuhan di dalam candle: o.intrabar = 'conservative' (default: SL dianggap duluan → batas bawah)
+  // atau 'path' (lintasan intrabar; pada entri stop cenderung optimis). Data 30m tidak bisa memastikan mana yang benar.
   function simulate(candles, i, side, plan, o, c2) {
     const n = candles.length;
     const dir = side === 'BUY' ? 1 : -1;
+    const mode = o.intrabar === 'path' ? 'path' : 'conservative';
     const { entry, sl } = plan;
-    let tp1 = plan.tp1;
 
-    // 1) tunggu entry stop terpicu dalam jendela fillWindow
+    // 1) tunggu entry terpicu dalam jendela fillWindow
     let fillIdx = -1;
-    let fillPx = 0;
+    let f = null;
     for (let j = i + 1; j <= Math.min(n - 1, i + c2.fillWindow); j++) {
-      const cj = candles[j];
-      const trig = dir > 0 ? cj.h >= entry : cj.l <= entry;
-      if (trig) {
-        fillIdx = j;
-        fillPx = dir > 0 ? Math.max(entry, cj.o) : Math.min(entry, cj.o);
-        break;
-      }
-      // setup batal bila SL tersentuh sebelum entri
-      if (dir > 0 ? cj.l <= sl : cj.h >= sl) break;
+      f = fillStop(candles[j], dir, entry, sl, mode);
+      if (f && f.cancel) return { trade: null, next: i + 1 }; // setup batal: SL tersentuh sebelum entri
+      if (f) { fillIdx = j; break; }
     }
     if (fillIdx < 0) return { trade: null, next: i + 1 };
-
+    const slip = o.slip || 0; // slippage: entri & exit SL terisi lebih buruk sebesar slip
+    const fillPx = f.fill + dir * slip;
     const risk = dir * (fillPx - sl);
     if (!(risk > 0)) return { trade: null, next: fillIdx + 1 };
     // plan.tpR: TP = kelipatan risiko dari harga isi sebenarnya (untuk entri market / pencarian aturan keluar)
-    if (plan.tpR != null) tp1 = fillPx + dir * plan.tpR * risk;
+    const tp1 = plan.tpR != null ? fillPx + dir * plan.tpR * risk : plan.tp1;
 
-    // 2) kelola posisi: SL dulu bila SL & TP di candle yang sama (konservatif)
-    let exitIdx = -1;
-    let exitPx = 0;
-    let outcome = '';
-    for (let j = fillIdx; j <= Math.min(n - 1, fillIdx + c2.maxHold); j++) {
-      const cj = candles[j];
-      const first = j === fillIdx;
-      const hitSL = dir > 0 ? cj.l <= sl : cj.h >= sl;
-      const hitTP = dir > 0 ? cj.h >= tp1 : cj.l <= tp1;
-      if (!first && (dir > 0 ? cj.o <= sl : cj.o >= sl)) { exitIdx = j; exitPx = cj.o; outcome = 'SL'; break; }
-      if (hitSL) { exitIdx = j; exitPx = sl; outcome = 'SL'; break; }
-      if (!first && (dir > 0 ? cj.o >= tp1 : cj.o <= tp1)) { exitIdx = j; exitPx = cj.o; outcome = 'TP'; break; }
-      if (hitTP) { exitIdx = j; exitPx = tp1; outcome = 'TP'; break; }
-    }
-    if (exitIdx < 0) {
-      exitIdx = Math.min(n - 1, fillIdx + c2.maxHold);
-      exitPx = candles[exitIdx].c;
-      outcome = 'Waktu';
-    }
-    const gross = dir * (exitPx - fillPx);
+    // 2) kelola posisi: sisa lintasan candle isi, lalu candle-candle berikutnya
+    const lastIdx = Math.min(n - 1, fillIdx + c2.maxHold);
+    let ex;
+    const r0 = mode === 'path' ? scanPath(barPath(candles[fillIdx]), f.seg, fillPx, dir, sl, tp1) : consBar(candles[fillIdx], dir, sl, tp1);
+    if (r0) ex = { exitIdx: fillIdx, exitPx: r0.px, outcome: r0.hit };
+    else ex = manageFrom(candles, fillIdx, lastIdx, dir, sl, tp1, mode);
+    if (ex.outcome === 'SL') ex.exitPx -= dir * slip;
+    const gross = dir * (ex.exitPx - fillPx);
     const R = (gross - o.spread) / (risk + o.spread);
     return {
-      trade: { signalIdx: i, fillIdx, exitIdx, side, entry: fillPx, exit: exitPx, sl, tp: tp1, R, outcome },
-      next: exitIdx + 1,
+      trade: { signalIdx: i, fillIdx, exitIdx: ex.exitIdx, side, entry: fillPx, exit: ex.exitPx, sl, tp: tp1, R, outcome: ex.outcome },
+      next: ex.exitIdx + 1,
     };
   }
 
@@ -1248,7 +1296,7 @@
     computeIndicators, findSwings, marketStructure, buildLevels, detectPatterns, buildPlan,
     analyze, analyzeAt, backtest, tradeStats, positionSize, pipValueUSD,
     parseCSV, inferPrecision, generateDemo,
-    simulate, toEpoch, fmtEpoch, resample, checkAlignment, prepareMTF, analyzeMTFAt, backtestMTF,
+    simulate, barPath, scanPath, consBar, manageFrom, fillStop, toEpoch, fmtEpoch, resample, checkAlignment, prepareMTF, analyzeMTFAt, backtestMTF,
     wilson, groupStats, summarizeMTF, probabilityForScore, MTF_DEFAULTS, mtfEvents,
   };
 });

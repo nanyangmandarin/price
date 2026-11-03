@@ -435,3 +435,18 @@ test('mtfEvents: arah, komponen, dan rencana level konsisten', () => {
     for (const s of bt.signals) assert.ok(set.has(s.i), 'sinyal ' + s.i + ' tidak ada di event');
   });
 });
+
+test('mode path: low sebelum fill tidak dihitung sebagai SL (candle naik O→L→H→C); mode konservatif: SL duluan', () => {
+  // BUY stop 10.5, SL 10.2. Candle isi naik: O 10.3 → L 10.1 → H 10.8 → C 10.7.
+  // Low 10.1 terjadi SEBELUM harga naik ke 10.5 → setup batal (SL tersentuh sebelum entri), bukan trade kalah.
+  const cs = [C(10, 10.1, 9.9, 10), C(10.3, 10.8, 10.1, 10.7), C(10.7, 11, 10.6, 10.9)];
+  const r = PA.simulate(cs, 0, 'BUY', { entry: 10.5, sl: 10.2, tp1: 10.9 }, { spread: 0, intrabar: 'path' }, { fillWindow: 2, maxHold: 5 });
+  assert.equal(r.trade, null);
+  const rc = PA.simulate(cs, 0, 'BUY', { entry: 10.5, sl: 10.2, tp1: 10.9 }, { spread: 0 }, { fillWindow: 2, maxHold: 5 });
+  assert.equal(rc.trade.outcome, 'SL'); // konservatif: terisi lalu dianggap kena SL di candle yang sama
+  // Candle isi turun: O 10.3 → H 10.8 (isi 10.5, sentuh TP 10.75) → L 10.1
+  const cs2 = [C(10, 10.1, 9.9, 10), C(10.3, 10.8, 10.1, 10.2), C(10.2, 10.3, 10.1, 10.2)];
+  const r2 = PA.simulate(cs2, 0, 'BUY', { entry: 10.5, sl: 10.2, tp1: 10.75 }, { spread: 0, intrabar: 'path' }, { fillWindow: 2, maxHold: 5 });
+  assert.equal(r2.trade.outcome, 'TP');
+  assert.equal(r2.trade.exitIdx, 1);
+});

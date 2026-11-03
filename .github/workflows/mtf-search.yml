@@ -1,13 +1,20 @@
-name: Pencarian aturan multi-timeframe
+name: Pencarian aturan (multi-timeframe / breakout London)
 
 # Memakai ulang data 30m dari run "Backtest multi-timeframe" (artefak hasil-*, disimpan 14 hari),
-# lalu menjalankan tools/search-mtf.js (latih 2020–2023, uji 2024–sekarang). Hasil ada di log & ringkasan job.
+# lalu menjalankan skrip pencarian terpilih (latih 2020–2023, uji 2024–sekarang). Hasil ada di log & ringkasan job.
 on:
   workflow_dispatch:
     inputs:
       data_run_id:
         description: "ID run mtf-backtest.yml yang artefak datanya dipakai"
         default: "41561545932"
+      script:
+        description: "Skrip pencarian"
+        type: choice
+        options:
+          - search-london.js
+          - search-mtf.js
+        default: search-london.js
 
 permissions:
   contents: read
@@ -35,5 +42,5 @@ jobs:
       - name: Pencarian
         run: |
           ls -la data
-          node tools/search-mtf.js --dir data | tee search.txt
+          node "tools/${{ inputs.script }}" --dir data | tee search.txt
           { echo '```'; cat search.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

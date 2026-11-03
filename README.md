@@ -90,3 +90,4 @@ Analisis hanya memakai candle yang sudah close (tanpa look-ahead; ada tes yang m
 - `engine.js`: mesin analisis murni (browser dan Node), dengan tes di `test/engine.test.js` (termasuk tes simetri BUY/SELL dan tes tanpa look-ahead)
 - `app.js`, `index.html`, `styles.css`: antarmuka
 - `tools/mtf-report.js`: laporan backtest multi-timeframe dari CSV (Node); `tools/export_mt5.py`: ekspor data MT5
+- `london.js`, `tools/search-london.js`: strategi breakout sesi London (jam lokal London termasuk DST) dan pencariannya; `tools/search-mtf.js`: pencarian aturan multi-timeframe
