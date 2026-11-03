@@ -19,6 +19,7 @@ const INST = [['XAUUSD', 3, 1], ['EURUSD', 1, 0.2], ['GBPUSD', 1.2, 0.2], ['AUDU
 const FROM = PA.toEpoch(arg('from', '2020-01-01'));
 const SPLIT = PA.toEpoch(arg('split', '2024-01-01'));
 const MIN_N = Number(arg('min-n', 150));
+const MODE = arg('mode', 'conservative') === 'path' ? 'path' : 'conservative'; // mode seleksi
 
 const t0 = Date.now();
 const data = INST.map(([sym, pips, slipPips], k) => {
@@ -60,7 +61,7 @@ const stat = (A) => {
 
 function evaluate(c, keep, mode) {
   const res = data.map((d) => {
-    const r = L.run(d.M, d.days, c, d.spread, mode || 'conservative', d.slip);
+    const r = L.run(d.M, d.days, c, d.spread, mode || MODE, d.slip);
     const tr = newAcc();
     const te = newAcc();
     for (const t of r.trades) { if (t.ts < FROM) continue; addAcc(t.ts < SPLIT ? tr : te, t.R); }
@@ -71,7 +72,7 @@ function evaluate(c, keep, mode) {
 
 const t1 = Date.now();
 const all = configs.map((c) => evaluate(c, false));
-console.log('\nBiaya: spread + slippage; urutan intrabar konservatif.');
+console.log('\nBiaya: spread + slippage; urutan intrabar: ' + (MODE === 'path' ? 'LINTASAN (batas atas, optimis)' : 'konservatif (batas bawah)') + '.');
 console.log(configs.length + ' konfigurasi diuji dalam ' + Math.round((Date.now() - t1) / 1000) + ' dtk. Latih: sejak ' + PA.fmtEpoch(FROM).slice(0, 10) + ' s/d ' + PA.fmtEpoch(SPLIT - 1).slice(0, 10) + ', uji: sejak ' + PA.fmtEpoch(SPLIT).slice(0, 10));
 
 const f = (x) => (x * 100).toFixed(1) + '%';
@@ -98,7 +99,8 @@ top.forEach((x, k) => {
   console.log('\n#' + (k + 1) + ' ' + label(x.c));
   console.log('  latih: ' + line(st));
   console.log('  uji  : ' + line(ss) + verdict);
-  console.log('  uji (mode lintasan, batas atas): ' + line(stat(evaluate(x.c, false, 'path').test)));
+  const other = MODE === 'path' ? 'conservative' : 'path';
+  console.log('  uji (mode ' + (other === 'path' ? 'lintasan, batas atas' : 'konservatif, batas bawah') + '): ' + line(stat(evaluate(x.c, false, other).test)));
   console.log('  uji per instrumen: ' + x.res.map((r) => { const s = stat(r.te); return r.sym + ' n' + s.n + ' ' + f(s.win) + ' ' + fr(s.avgR) + ' t' + s.t.toFixed(1); }).join(' | '));
 });
 const pos = top.filter((x) => { const s = stat(x.test); return s.win > 0.5 && s.avgR > 0; });

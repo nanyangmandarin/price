@@ -15,6 +15,9 @@ on:
           - search-london.js
           - search-mtf.js
         default: search-london.js
+      args:
+        description: "Argumen tambahan (mis. --mode path)"
+        default: ""
 
 permissions:
   contents: read
@@ -42,5 +45,5 @@ jobs:
       - name: Pencarian
         run: |
           ls -la data
-          node "tools/${{ inputs.script }}" --dir data | tee search.txt
+          node "tools/${{ inputs.script }}" --dir data ${{ inputs.args }} | tee search.txt
           { echo '```'; cat search.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
