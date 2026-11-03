@@ -69,6 +69,10 @@ Aplikasi tidak mengunduh data pasar sendiri (kebanyakan penyedia tidak mengizink
 
 File 4H/1D sendiri boleh diunggah, tetapi harus dari sumber dan zona waktu yang sama; aplikasi menolaknya bila isinya tidak cocok dengan 30m (mencegah look-ahead diam-diam).
 
+### Hasil pada data nyata (Dukascopy 2020–2026)
+
+Aturan Normal (skor ≥ 7) diuji di XAU/USD, EUR/USD, GBP/USD, AUD/USD dan **tidak menunjukkan edge**: ekspektasi −0,02 sampai −0,18 R per trade setelah spread, dan tidak stabil antar tahun. Ringkasan lengkap: [`reports/hasil-dukascopy-2026-11-03.md`](reports/hasil-dukascopy-2026-11-03.md). Workflow `mtf-backtest.yml` (Actions → Run workflow) mengulang pengujian dengan data terbaru.
+
 ### Cara membaca hasil
 
 - **Win rate dengan CI 95% (Wilson)** dibandingkan dengan **win rate impas**. Win rate tinggi belum berarti untung bila rata-rata kalah lebih besar dari rata-rata menang.
