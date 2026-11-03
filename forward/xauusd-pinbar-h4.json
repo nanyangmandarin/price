@@ -1,0 +1,43 @@
+{
+ "rule": "xauusd-pinbar-h4-v1",
+ "instrument": "XAUUSD",
+ "forward_from": "2026-11-03T22:00:00Z",
+ "updated": "2026-11-03 08:21 UTC",
+ "lastBar": "2026-11-03 06:00 UTC",
+ "lastClose": 3911.925,
+ "forwardSummary": {
+  "n": 0
+ },
+ "verdict": "Belum ada trade maju yang selesai.",
+ "dataRevisions": 0,
+ "pending": null,
+ "open": [],
+ "forward": [],
+ "reference": {
+  "note": "Referensi historis (BUKAN uji maju): latih = data pemilihan aturan, uji = 2024 s/d forward_from.",
+  "train": {
+   "n": 99,
+   "wins": 72,
+   "winRate": 0.7272727272727273,
+   "winLo": 0.632288909736815,
+   "winHi": 0.8052772113659294,
+   "avgR": 0.06701309479719698,
+   "avgRLo": -0.06316894314589232,
+   "avgRHi": 0.19719513274028627,
+   "totalR": 6.634296384922501,
+   "breakEven": 0.6818799262553151
+  },
+  "test": {
+   "n": 74,
+   "wins": 54,
+   "winRate": 0.7297297297297297,
+   "winLo": 0.6190853622781575,
+   "winHi": 0.8176990820292566,
+   "avgR": 0.08061319755098648,
+   "avgRLo": -0.07059132609609242,
+   "avgRHi": 0.23181772119806537,
+   "totalR": 5.965376618772999,
+   "breakEven": 0.6754093191667706
+  }
+ }
+}
