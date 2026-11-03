@@ -1,0 +1,11 @@
+{
+  "name": "price-action-decision",
+  "version": "1.0.0",
+  "description": "Alat bantu keputusan trading forex & gold berbasis price action",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/engine.test.js",
+    "start": "python3 -m http.server 8080"
+  },
+  "license": "MIT"
+}

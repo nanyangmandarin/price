@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price Action Decision</title>
+<meta name="description" content="Alat bantu keputusan trading forex & gold berbasis price action: struktur pasar, support/resistance, pola candle, rencana trade, dan backtest.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>Price Action Decision</h1>
+    <p>Keputusan BUY / SELL / WAIT untuk forex &amp; gold dari struktur pasar, support/resistance, dan pola candle.</p>
+  </div>
+  <label class="inst-pick">
+    <span>Instrumen</span>
+    <select id="inst" aria-label="Pilih instrumen"></select>
+  </label>
+</header>
+
+<main class="layout">
+  <!-- ============ CHART ============ -->
+  <section class="card chart-card" aria-label="Chart harga">
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Jumlah candle ditampilkan" id="viewSeg">
+        <button data-view="60">60</button>
+        <button data-view="100" class="on">100</button>
+        <button data-view="160">160</button>
+        <button data-view="9999">Semua</button>
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" id="tgSR" checked> S/R</label>
+        <label><input type="checkbox" id="tgEma" checked> EMA</label>
+        <label><input type="checkbox" id="tgSwing"> Swing</label>
+        <label><input type="checkbox" id="tgPat" checked> Pola</label>
+        <label><input type="checkbox" id="tgSig" checked> Sinyal historis</label>
+      </div>
+    </div>
+    <canvas id="chart" role="img" aria-label="Chart candlestick dengan level support resistance dan rencana trade"></canvas>
+    <div class="replay">
+      <button id="sigPrev" title="Sinyal sebelumnya">⏮ Sinyal</button>
+      <button id="cutPrev" aria-label="Candle sebelumnya">◀</button>
+      <input type="range" id="cut" min="0" max="0" value="0" aria-label="Analisis sampai candle ke-">
+      <button id="cutNext" aria-label="Candle berikutnya">▶</button>
+      <button id="sigNext" title="Sinyal berikutnya">Sinyal ⏭</button>
+    </div>
+    <p class="replay-label" id="cutLabel"></p>
+  </section>
+
+  <!-- ============ KEPUTUSAN ============ -->
+  <aside class="side">
+    <section class="card decision" id="decision" aria-live="polite"></section>
+    <section class="card" id="plan"></section>
+    <section class="card" id="reasons"></section>
+    <section class="card" id="structure"></section>
+  </aside>
+
+  <!-- ============ DATA / PENGATURAN / BACKTEST ============ -->
+  <div class="lower">
+    <section class="card">
+      <h2>Data candle</h2>
+      <div class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-tab="demo" class="on" aria-selected="true">Contoh</button>
+        <button role="tab" data-tab="import" aria-selected="false">Impor CSV</button>
+        <button role="tab" data-tab="manual" aria-selected="false">Input manual</button>
+      </div>
+
+      <div class="tabpanel" id="tab-demo">
+        <p class="hint">Data <b>sintetis</b> (bukan data pasar nyata) untuk mencoba aplikasi. Untuk analisis sungguhan, gunakan <b>Impor CSV</b>.</p>
+        <div class="btn-row">
+          <button class="btn" data-demo="up">Uptrend</button>
+          <button class="btn" data-demo="down">Downtrend</button>
+          <button class="btn" data-demo="range">Sideways</button>
+          <button class="btn" data-demo="mixed">Campuran</button>
+          <button class="btn ghost" id="demoReroll" title="Buat variasi baru dari jenis yang sama">🎲 Variasi lain</button>
+        </div>
+      </div>
+
+      <div class="tabpanel" id="tab-import" hidden>
+        <p class="hint">
+          Ekspor dari <b>MT4/MT5</b> (History Center / <i>Export Chart Data</i>), <b>TradingView</b> (Export chart data), Dukascopy, atau CSV lain.
+          Kolom: waktu, open, high, low, close. Header opsional; pemisah koma / titik-koma / tab; urutan terbalik dikenali otomatis.
+        </p>
+        <textarea id="csv" rows="6" spellcheck="false" placeholder="time,open,high,low,close&#10;2025-01-02 00:00,2625.40,2631.10,2620.55,2629.80&#10;..."></textarea>
+        <div class="btn-row">
+          <label class="btn file">Pilih file…<input type="file" id="csvFile" accept=".csv,.txt,text/csv,text/plain" hidden></label>
+          <button class="btn primary" id="csvGo">Analisis data ini</button>
+        </div>
+        <p class="msg" id="csvMsg" role="status"></p>
+      </div>
+
+      <div class="tabpanel" id="tab-manual" hidden>
+        <p class="hint">Tambahkan candle yang <b>sudah close</b> satu per satu (mis. dari MT4/MT5), keputusan langsung diperbarui.</p>
+        <div class="grid4">
+          <label>Open<input type="number" step="any" id="mO" inputmode="decimal"></label>
+          <label>High<input type="number" step="any" id="mH" inputmode="decimal"></label>
+          <label>Low<input type="number" step="any" id="mL" inputmode="decimal"></label>
+          <label>Close<input type="number" step="any" id="mC" inputmode="decimal"></label>
+        </div>
+        <label class="wide">Label waktu (opsional)<input type="text" id="mT" placeholder="mis. 2025-03-12 14:00"></label>
+        <div class="btn-row">
+          <button class="btn primary" id="mAdd">Tambah candle</button>
+          <button class="btn ghost" id="mUndo">Hapus candle terakhir</button>
+        </div>
+        <p class="msg" id="mMsg" role="status"></p>
+      </div>
+      <p class="data-info" id="dataInfo"></p>
+    </section>
+
+    <section class="card">
+      <h2>Pengaturan</h2>
+      <div class="grid2">
+        <label>Modal akun (USD)<input type="number" id="balance" min="1" step="any" inputmode="decimal"></label>
+        <label>Risiko per trade (%)<input type="number" id="riskPct" min="0.05" max="10" step="0.05" inputmode="decimal"></label>
+        <label>Spread (pip)<input type="number" id="spread" min="0" step="0.1" inputmode="decimal"></label>
+        <label>Nilai 1 pip / lot (USD)<input type="number" id="pipValue" min="0" step="any" inputmode="decimal"></label>
+        <label>RR minimum ke TP1<input type="number" id="minRR" min="1" max="5" step="0.1" inputmode="decimal"></label>
+        <label>Selektivitas sinyal
+          <select id="threshold">
+            <option value="7">Ketat (sedikit, kualitas tinggi)</option>
+            <option value="6">Normal</option>
+            <option value="5">Longgar (lebih sering)</option>
+          </select>
+        </label>
+        <label>Sensitivitas swing
+          <select id="swingK">
+            <option value="2">Sensitif (2)</option>
+            <option value="3">Normal (3)</option>
+            <option value="4">Halus (4)</option>
+            <option value="5">Sangat halus (5)</option>
+          </select>
+        </label>
+        <label id="customWrap" hidden>Ukuran 1 pip (harga)<input type="number" id="pipSize" min="0" step="any" inputmode="decimal"></label>
+      </div>
+      <p class="hint">Nilai pip otomatis: <span id="pipAuto"></span>. Untuk pair silang (mis. EUR/JPY) isi manual sesuai broker. Emas: 1 lot = 100 oz, 1 pip = $0,10.</p>
+    </section>
+
+    <section class="card wide-card" id="btCard">
+      <h2>Backtest aturan yang sama</h2>
+      <div id="bt"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="foot">
+  <p><b>Peringatan:</b> aplikasi ini adalah alat bantu analisis, bukan nasihat keuangan atau jaminan profit. Trading forex &amp; gold berleverage berisiko tinggi dan dapat menyebabkan kerugian melebihi ekspektasi. Uji di akun demo dan gunakan manajemen risiko.</p>
+</footer>
+
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
