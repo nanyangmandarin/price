@@ -136,6 +136,41 @@
       <p class="hint">Nilai pip otomatis: <span id="pipAuto"></span>. Untuk pair silang (mis. EUR/JPY) isi manual sesuai broker. Emas: 1 lot = 100 oz, 1 pip = $0,10.</p>
     </section>
 
+    <section class="card wide-card" id="mtfCard">
+      <h2>Multi-timeframe 1D · 4H · 30m — peluang &amp; win rate historis</h2>
+      <p class="hint">
+        Top-down: <b>1D</b> menentukan bias &amp; level besar, <b>4H</b> memberi setup, <b>30m</b> memberi pemicu candlestick
+        (pin bar, engulfing, inside bar breakout, star) yang harus muncul <b>di level 4H/1D</b>. Unggah data <b>30m</b> instrumen terpilih
+        dari 2020 (mis. XAU/USD) — 4H &amp; 1D disusun otomatis dari 30m sehingga pasti sinkron. File 4H/1D sendiri boleh diunggah,
+        asal berasal dari sumber dan zona waktu yang sama.
+      </p>
+      <div class="grid3">
+        <label>File 30m (wajib)<input type="file" id="mtfF30" accept=".csv,.txt,text/csv,text/plain"></label>
+        <label>File 4H (opsional)<input type="file" id="mtfF4h" accept=".csv,.txt,text/csv,text/plain"></label>
+        <label>File 1D (opsional)<input type="file" id="mtfF1d" accept=".csv,.txt,text/csv,text/plain"></label>
+      </div>
+      <div class="grid3" style="margin-top:10px">
+        <label>Uji mulai tanggal<input type="date" id="mtfFrom" value="2020-01-01"></label>
+        <label>Selektivitas MTF
+          <select id="mtfTh">
+            <option value="9">Ketat (skor ≥ 9)</option>
+            <option value="7" selected>Normal (skor ≥ 7)</option>
+            <option value="6">Longgar (skor ≥ 6)</option>
+          </select>
+        </label>
+        <label>Jam awal hari data (0–23)<input type="number" id="mtfAnchor" min="0" max="23" step="1" value="0"></label>
+      </div>
+      <p class="hint" style="margin-top:6px">Jam awal hari: 0 untuk data MT4/MT5 (hari baru = 00:00 waktu server). Bila datanya UTC dan Anda ingin hari FX bermula ±22:00, isi 22. Hanya dipakai saat 4H/1D diturunkan dari 30m.</p>
+      <div class="btn-row">
+        <button class="btn primary" id="mtfRun" disabled>Jalankan analisis &amp; backtest</button>
+        <button class="btn ghost" id="mtfCancel" hidden>Batal</button>
+        <button class="btn ghost" id="mtfDemo" title="Data acak untuk mencoba tampilan — bukan data pasar">Coba dengan data sintetis</button>
+        <progress id="mtfProg" max="1" value="0" hidden></progress>
+      </div>
+      <p class="msg" id="mtfMsg" role="status"></p>
+      <div id="mtfOut"></div>
+    </section>
+
     <section class="card wide-card" id="btCard">
       <h2>Backtest aturan yang sama</h2>
       <div id="bt"></div>

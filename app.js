@@ -291,8 +291,8 @@
     if (s.trades) drawEquity(s.equity);
   }
 
-  function drawEquity(eq) {
-    const cv = $('eq');
+  function drawEquity(eq, id) {
+    const cv = $(id || 'eq');
     if (!cv) return;
     const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
     cv.width = W * dpr; cv.height = H * dpr;
@@ -602,7 +602,7 @@
       const k = candleAt(ev);
       if (k >= minC() - 1) setCut(k);
     });
-    window.addEventListener('resize', () => { drawChart(); if (state.bt && state.bt.stats.trades) drawEquity(state.bt.stats.equity); });
+    window.addEventListener('resize', () => { drawChart(); if (state.bt && state.bt.stats.trades) drawEquity(state.bt.stats.equity); if (mtf.sum && mtf.sum.overall.n) drawEquity(mtf.sum.overall.equity, 'eqM'); });
     document.addEventListener('keydown', (ev) => {
       if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && document.activeElement.type !== 'range') return;
       if (ev.key === 'ArrowLeft') { ev.preventDefault(); $('cutPrev').click(); }
@@ -640,6 +640,14 @@
       rd.readAsText(f);
     };
 
+    // multi-timeframe
+    $('mtfF30').onchange = () => onMtfFile('m30', $('mtfF30'));
+    $('mtfF4h').onchange = () => onMtfFile('h4', $('mtfF4h'));
+    $('mtfF1d').onchange = () => onMtfFile('d1', $('mtfF1d'));
+    $('mtfRun').onclick = () => runMtf('file');
+    $('mtfDemo').onclick = () => runMtf('demo');
+    $('mtfCancel').onclick = () => { mtf.cancel = true; };
+
     // manual
     $('mAdd').onclick = () => {
       const o = parseFloat($('mO').value), h = parseFloat($('mH').value), l = parseFloat($('mL').value), c = parseFloat($('mC').value);
@@ -664,6 +672,186 @@
       recomputeAll(); save();
       showMsg('mMsg', 'Candle terakhir dihapus.', 'ok');
     };
+  }
+
+  /* ------------------------------ multi-timeframe ------------------------------ */
+  const longT = (t) => String(t).slice(0, 16);
+  const mtf = { raw: { m30: null, h4: null, d1: null }, ctx: null, bt: null, sum: null, live: null, source: null, running: false, cancel: false };
+
+  function mtfMsg(text, kind) {
+    const el = $('mtfMsg');
+    el.textContent = text;
+    el.className = 'msg' + (kind ? ' ' + kind : '');
+  }
+
+  function readFileText(file) {
+    return new Promise((resolve, reject) => {
+      const rd = new FileReader();
+      rd.onload = () => resolve(String(rd.result));
+      rd.onerror = () => reject(new Error('Gagal membaca file ' + file.name));
+      rd.readAsText(file);
+    });
+  }
+
+  async function onMtfFile(key, input) {
+    const f = input.files[0];
+    mtf.raw[key] = null;
+    $('mtfRun').disabled = !mtf.raw.m30;
+    if (!f) { if (key === 'm30') $('mtfRun').disabled = true; return; }
+    try {
+      mtfMsg('Membaca ' + f.name + '…');
+      await new Promise((r) => setTimeout(r, 20));
+      const r = PA.parseCSV(await readFileText(f));
+      mtf.raw[key] = r.candles;
+      const label = { m30: '30m', h4: '4H', d1: '1D' }[key];
+      mtfMsg(label + ': ' + r.candles.length.toLocaleString('id-ID') + ' candle · ' + longT(r.candles[0].t) + ' → ' + longT(r.candles[r.candles.length - 1].t) + (r.warnings.length ? ' · ' + r.warnings.join(' ') : ''), 'ok');
+    } catch (e) {
+      input.value = '';
+      mtfMsg(e.message, 'err');
+    }
+    $('mtfRun').disabled = !mtf.raw.m30 || mtf.running;
+  }
+
+  const pct = (x, d) => (x * 100).toFixed(d == null ? 1 : d) + '%';
+  const sgn = (x, d) => (x > 0 ? '+' : '') + x.toFixed(d == null ? 2 : d);
+
+  async function runMtf(source) {
+    if (mtf.running) return;
+    mtf.running = true; mtf.cancel = false;
+    $('mtfRun').disabled = true; $('mtfCancel').hidden = false; $('mtfProg').hidden = false; $('mtfProg').value = 0;
+    $('mtfOut').innerHTML = '';
+    try {
+      let src;
+      if (source === 'demo') {
+        mtfMsg('Membuat data sintetis…');
+        await new Promise((r) => setTimeout(r, 20));
+        src = { m30: PA.generateDemo('mixed', state.inst, 40000, state.demoSeed, { stepMin: 30 }) };
+      } else {
+        src = { m30: mtf.raw.m30, h4: mtf.raw.h4, d1: mtf.raw.d1 };
+      }
+      const spreadPrice = state.s.spreadPips * pipSize();
+      const opts = {
+        spread: spreadPrice, minRR: state.s.minRR, mtfThreshold: Number($('mtfTh').value),
+        dp: PA.inferPrecision(src.m30), anchorMs: (Number($('mtfAnchor').value) || 0) * 3600000,
+      };
+      mtfMsg('Menyiapkan 3 timeframe…');
+      await new Promise((r) => setTimeout(r, 20));
+      const ctx = PA.prepareMTF({ m30: src.m30.map((c) => Object.assign({}, c)), h4: src.h4, d1: src.d1 }, opts);
+
+      // Validasi sinkronisasi bila 4H/1D diunggah sendiri: bila tidak sinkron, hasil bisa memuat look-ahead
+      for (const [k, arr, ms, lab] of [['h4', ctx.H, 4 * 3600000, '4H'], ['d1', ctx.D, 24 * 3600000, '1D']]) {
+        if (!src[k]) continue;
+        const al = PA.checkAlignment(ctx.M, arr, ms);
+        if (al < 0.8) throw new Error('File ' + lab + ' tidak sinkron dengan file 30m (hanya ' + pct(al, 0) + ' candle yang cocok) — kemungkinan beda zona waktu atau beda broker. Hasil akan tidak valid. Kosongkan file ' + lab + ' agar diturunkan otomatis dari 30m.');
+      }
+
+      const fromTs = $('mtfFrom').value ? PA.toEpoch($('mtfFrom').value) : null;
+      mtfMsg('Menjalankan backtest…');
+      const bt = await PA.backtestMTF(ctx, { fromTs, onProgress: (p) => { $('mtfProg').value = p; }, cancel: () => mtf.cancel });
+      if (bt.cancelled) { mtfMsg('Dibatalkan.'); return; }
+      mtf.ctx = ctx; mtf.bt = bt; mtf.source = source;
+      mtf.sum = PA.summarizeMTF(bt.trades, { minScore: opts.mtfThreshold });
+      mtf.live = PA.analyzeMTFAt(ctx, ctx.M.length - 1, false);
+      mtfMsg('Selesai: ' + ctx.M.length.toLocaleString('id-ID') + ' candle 30m, ' + bt.trades.length + ' trade.', 'ok');
+      renderMtf();
+    } catch (e) {
+      mtfMsg(e.message, 'err');
+    } finally {
+      mtf.running = false;
+      $('mtfRun').disabled = !mtf.raw.m30; $('mtfCancel').hidden = true; $('mtfProg').hidden = true;
+    }
+  }
+
+  function levelNear(levels, price, dir) {
+    const f = levels.filter((l) => (dir > 0 ? l.price <= price : l.price > price));
+    return dir > 0 ? f.sort((a, b) => b.price - a.price)[0] : f.sort((a, b) => a.price - b.price)[0];
+  }
+
+  function renderMtf() {
+    const el = $('mtfOut');
+    const { ctx, sum, live } = mtf;
+    if (!ctx || !sum) { el.innerHTML = ''; return; }
+    const dpM = PA.inferPrecision(ctx.M);
+    const fm = (x) => (x == null || !isFinite(x) ? '—' : x.toFixed(dpM));
+    let h = '';
+    if (mtf.source === 'demo') h += '<div class="callout">Data sintetis acak — angka di bawah hanya untuk mencoba tampilan, <b>bukan</b> probabilitas pasar nyata. Unggah file 30m dari broker Anda.</div>';
+
+    /* ---- keputusan top-down hidup ---- */
+    if (live && live.ok) {
+      const d = live.decision;
+      const icon = { BUY: '▲', SELL: '▼', WAIT: '⏸' }[d.action];
+      const col = (title, layer) => {
+        const st = layer.structure;
+        const tag = st.trend === 'up' ? 'bull' : st.trend === 'down' ? 'bear' : '';
+        const sup = levelNear(layer.levels, live.price, 1), res = levelNear(layer.levels, live.price, -1);
+        return '<div class="mtf-col"><h4>' + title + '<span class="tag ' + tag + '">' + esc(st.label) + '</span></h4>' +
+          '<span class="note">candle close terakhir: ' + esc(longT(layer.time)) + '</span>' +
+          '<span class="note">EMA 20 ' + fm(layer.ema) + ' · harga ' + (live.price > layer.ema ? 'di atas' : 'di bawah') + '</span>' +
+          '<span class="note">R: ' + (res ? fm(res.price) + ' (' + res.touches + '×)' : '—') + ' · S: ' + (sup ? fm(sup.price) + ' (' + sup.touches + '×)' : '—') + '</span></div>';
+      };
+      const pats = live.layers.m30.patterns.filter((p) => p.bias !== 'neutral' || p.key === 'insidebar');
+      h += '<h3>Keputusan sekarang · ' + esc(longT(live.time)) + ' · harga ' + fm(live.price) + '</h3>' +
+        '<div class="mtf-cols">' + col('1D (bias)', live.layers.d1) + col('4H (setup)', live.layers.h4) +
+        '<div class="mtf-col"><h4>30m (pemicu)</h4><span class="note">' + (pats.length ? pats.map((p) => esc(p.name)).join(', ') : 'Tidak ada pola pada candle terakhir') + '</span><span class="note">ATR(30m) ' + pipsOf(live.atr) + ' pip</span></div></div>';
+      h += '<div class="mtf-live"><div><div class="badge-row"><span class="badge ' + d.action + '"><span aria-hidden="true">' + icon + '</span> ' + d.action + '</span>' +
+        '<div class="badge-meta">Skor <b>' + sgn(live.score, 0) + '</b>' + (d.action !== 'WAIT' ? ' · keyakinan <b>' + d.confidence + '</b>' : '') + '</div></div>' +
+        '<p class="summary">' + esc(d.summary) + '</p>';
+      if (d.action !== 'WAIT') {
+        const pr = PA.probabilityForScore(sum, live.score);
+        const o = sum.overall;
+        h += '<div class="prob"><b>Peluang menang historis</b> untuk skor ' + Math.abs(live.score) + ': ' +
+          (pr ? '<b>' + pct(pr.winRate, 0) + '</b> (CI 95% ' + pct(pr.lo, 0) + '–' + pct(pr.hi, 0) + ', n=' + pr.n + (pr.reliable ? '' : ' — sampel kecil') + ')' : 'belum ada data pada skor ini') +
+          '<br>Keseluruhan: <b>' + pct(o.winRate, 0) + '</b> dari ' + o.n + ' trade · titik impas <b>' + (o.breakEven != null ? pct(o.breakEven, 0) : '—') + '</b> · ekspektasi <b>' + sgn(o.avgR) + ' R</b>/trade.</div>';
+      } else if (d.watch.length) {
+        h += '<ul class="clean">' + d.watch.map((w) => '<li><span class="note">•</span><span>' + esc(w) + '</span></li>').join('') + '</ul>';
+      }
+      h += '</div><div>';
+      if (live.plan) {
+        const p = live.plan;
+        const pv = state.s.pipValue != null ? state.s.pipValue : PA.pipValueUSD(inst(), live.price);
+        const sz = PA.positionSize({ balance: state.s.balance, riskPct: state.s.riskPct, entry: p.entry, sl: p.sl, spread: p.spread, pipSize: pipSize(), pipValue: pv, tp1: p.tp1, tp2: p.tp2 });
+        h += '<table class="kv"><tr><td>Entry (' + (p.side === 'BUY' ? 'Buy' : 'Sell') + ' Stop)</td><td class="en"><b>' + fm(p.entry) + '</b></td></tr>' +
+          '<tr><td>Stop loss</td><td class="sl"><b>' + fm(p.sl) + '</b><span class="sub">' + pipsOf(p.entry - p.sl) + ' pip</span></td></tr>' +
+          '<tr><td>TP1</td><td class="tp"><b>' + fm(p.tp1) + '</b><span class="sub">' + pipsOf(p.tp1 - p.entry) + ' pip · RR ' + p.rr1.toFixed(2) + '</span></td></tr>' +
+          '<tr><td>TP2</td><td class="tp"><b>' + fm(p.tp2) + '</b><span class="sub">' + pipsOf(p.tp2 - p.entry) + ' pip · RR ' + p.rr2.toFixed(2) + '</span></td></tr>' +
+          (sz ? '<tr><td>Ukuran posisi</td><td><b>' + sz.lots.toFixed(2) + ' lot</b><span class="sub">risiko ' + money(sz.realRisk) + ' (' + state.s.riskPct + '%)</span></td></tr>' : '') + '</table>';
+        if (d.warnings.length) h += '<ul class="clean warns">' + d.warnings.map((w) => '<li>⚠ ' + esc(w) + '</li>').join('') + '</ul>';
+      }
+      h += '<ul class="clean" style="margin-top:8px">' + live.breakdown.map((b) => '<li><span class="pts ' + (b.pts > 0 ? 'pos' : b.pts < 0 ? 'neg' : '') + '">' + sgn(b.pts, 0) + '</span><span class="lab">' + esc(b.label) + '</span><span class="note">' + esc(b.note) + '</span></li>').join('') + '</ul></div></div>';
+    } else if (live) {
+      h += '<p class="hint">' + esc(live.error) + '</p>';
+    }
+
+    /* ---- statistik ---- */
+    const o = sum.overall;
+    h += '<h3>Probabilitas & win rate historis (' + esc(longT(ctx.M[mtf.bt.startAt].t)) + ' → ' + esc(longT(ctx.M[ctx.M.length - 1].t)) + ')</h3>';
+    if (!o.n) {
+      h += '<p class="hint">Tidak ada trade yang terpicu pada rentang ini. Coba selektivitas "Longgar" atau perpanjang rentang data.</p>';
+    } else {
+      const cl = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
+      h += '<div class="stats">' +
+        '<div class="stat"><span>Jumlah trade</span><b>' + o.n + '</b></div>' +
+        '<div class="stat"><span>Win rate</span><b>' + pct(o.winRate) + '</b><span>CI 95% ' + pct(o.ciLo, 0) + '–' + pct(o.ciHi, 0) + '</span></div>' +
+        '<div class="stat"><span>Win rate impas</span><b>' + (o.breakEven != null ? pct(o.breakEven) : '—') + '</b><span>menang ' + o.avgWin.toFixed(2) + 'R / kalah ' + o.avgLoss.toFixed(2) + 'R</span></div>' +
+        '<div class="stat"><span>Ekspektasi / trade</span><b class="' + cl(o.avgR) + '">' + sgn(o.avgR) + ' R</b></div>' +
+        '<div class="stat"><span>Total R</span><b class="' + cl(o.totalR) + '">' + sgn(o.totalR, 1) + '</b></div>' +
+        '<div class="stat"><span>Profit factor</span><b>' + (isFinite(o.profitFactor) ? o.profitFactor.toFixed(2) : '∞') + '</b></div>' +
+        '<div class="stat"><span>Max drawdown</span><b class="neg">−' + o.maxDD.toFixed(1) + ' R</b></div></div>' +
+        '<div class="verdict">' + esc(sum.verdict) + '</div>' +
+        '<canvas id="eqM" role="img" aria-label="Kurva ekuitas multi-timeframe dalam satuan R"></canvas>';
+
+      const tbl = (title, rows, first) => '<div class="tbl-title">' + title + '</div><div class="tbl-wrap"><table class="tr"><thead><tr><th>' + first + '</th><th>Trade</th><th>Win rate</th><th>CI 95%</th><th>Rata-rata R</th><th>Total R</th><th>PF</th></tr></thead><tbody>' +
+        rows.map((r) => '<tr><td>' + esc(r.label) + '</td>' + (r.g.n
+          ? '<td>' + r.g.n + '</td><td>' + pct(r.g.winRate, 0) + '</td><td>' + pct(r.g.ciLo, 0) + '–' + pct(r.g.ciHi, 0) + '</td><td class="' + (r.g.avgR > 0 ? 'tp' : 'sl') + '">' + sgn(r.g.avgR) + '</td><td>' + sgn(r.g.totalR, 1) + '</td><td>' + (isFinite(r.g.profitFactor) ? r.g.profitFactor.toFixed(2) : '∞') + '</td>'
+          : '<td colspan="6">—</td>') + '</tr>').join('') + '</tbody></table></div>';
+      h += tbl('Per skor konfluensi — peluang menang historis', sum.byScore.map((g) => ({ label: 'Skor ' + g.key + (g.key >= sum.scoreCap ? '+' : ''), g })), 'Skor');
+      h += tbl('Per tahun (stabilitas)', sum.byYear.map((g) => ({ label: String(g.key), g })), 'Tahun');
+      h += tbl('Per arah', sum.bySide.map((g) => ({ label: g.key, g })), 'Arah');
+      if (sum.split) h += tbl('Uji di luar sampel (pemisah ' + esc(PA.fmtEpoch(sum.split.splitTs)) + ')', [{ label: 'In-sample (awal)', g: sum.split.inSample }, { label: 'Out-of-sample (akhir)', g: sum.split.outSample }], 'Periode');
+    }
+    h += '<p class="assume">Aturan: analisis top-down hanya memakai candle 4H/1D yang <b>sudah close</b> saat candle 30m ditutup (tanpa look-ahead; diuji otomatis). Entri Buy/Sell Stop di atas/bawah pola 30m (terpicu dalam 3 candle), SL di sisi lain pola, TP1 di level 4H/1D terdekat dengan RR ≥ ' + state.s.minRR + ', keluar penuh di TP1/SL (SL didahulukan bila satu candle menyentuh keduanya), maks 96 candle (2 hari). Spread ' + state.s.spreadPips + ' pip dihitung; swap, komisi, dan slippage tidak. R = kelipatan risiko awal. <b>Probabilitas adalah frekuensi historis pada data ini, bukan jaminan masa depan</b>; parameter yang dioptimalkan pada data yang sama akan menggelembungkan hasil — nilai konsistensinya di tabel per tahun dan out-of-sample. Data MTF tidak disimpan di browser (terlalu besar); unggah ulang saat dibuka kembali.</p>';
+    el.innerHTML = h;
+    if (o.n) drawEquity(o.equity, 'eqM');
   }
 
   /* ------------------------------ init ------------------------------ */

@@ -477,6 +477,59 @@
   /* ------------------------------------------------------------------ */
   /* Backtest (walk-forward, tanpa look-ahead)                           */
   /* ------------------------------------------------------------------ */
+  // Simulasi satu trade dari sinyal di indeks i. Mengembalikan { trade, next }.
+  // trade = null bila order tidak terisi / tidak valid; next = indeks berikutnya yang boleh dianalisis.
+  function simulate(candles, i, side, plan, o, c2) {
+    const n = candles.length;
+    const dir = side === 'BUY' ? 1 : -1;
+    const { entry, sl, tp1 } = plan;
+
+    // 1) tunggu entry stop terpicu dalam jendela fillWindow
+    let fillIdx = -1;
+    let fillPx = 0;
+    for (let j = i + 1; j <= Math.min(n - 1, i + c2.fillWindow); j++) {
+      const cj = candles[j];
+      const trig = dir > 0 ? cj.h >= entry : cj.l <= entry;
+      if (trig) {
+        fillIdx = j;
+        fillPx = dir > 0 ? Math.max(entry, cj.o) : Math.min(entry, cj.o);
+        break;
+      }
+      // setup batal bila SL tersentuh sebelum entri
+      if (dir > 0 ? cj.l <= sl : cj.h >= sl) break;
+    }
+    if (fillIdx < 0) return { trade: null, next: i + 1 };
+
+    const risk = dir * (fillPx - sl);
+    if (!(risk > 0)) return { trade: null, next: fillIdx + 1 };
+
+    // 2) kelola posisi: SL dulu bila SL & TP di candle yang sama (konservatif)
+    let exitIdx = -1;
+    let exitPx = 0;
+    let outcome = '';
+    for (let j = fillIdx; j <= Math.min(n - 1, fillIdx + c2.maxHold); j++) {
+      const cj = candles[j];
+      const first = j === fillIdx;
+      const hitSL = dir > 0 ? cj.l <= sl : cj.h >= sl;
+      const hitTP = dir > 0 ? cj.h >= tp1 : cj.l <= tp1;
+      if (!first && (dir > 0 ? cj.o <= sl : cj.o >= sl)) { exitIdx = j; exitPx = cj.o; outcome = 'SL'; break; }
+      if (hitSL) { exitIdx = j; exitPx = sl; outcome = 'SL'; break; }
+      if (!first && (dir > 0 ? cj.o >= tp1 : cj.o <= tp1)) { exitIdx = j; exitPx = cj.o; outcome = 'TP'; break; }
+      if (hitTP) { exitIdx = j; exitPx = tp1; outcome = 'TP'; break; }
+    }
+    if (exitIdx < 0) {
+      exitIdx = Math.min(n - 1, fillIdx + c2.maxHold);
+      exitPx = candles[exitIdx].c;
+      outcome = 'Waktu';
+    }
+    const gross = dir * (exitPx - fillPx);
+    const R = (gross - o.spread) / (risk + o.spread);
+    return {
+      trade: { signalIdx: i, fillIdx, exitIdx, side, entry: fillPx, exit: exitPx, sl, tp: tp1, R, outcome },
+      next: exitIdx + 1,
+    };
+  }
+
   function backtest(candles, opts, cfg) {
     const o = Object.assign({}, DEFAULTS, opts);
     const c2 = Object.assign({ maxCandles: 1500, fillWindow: 3, maxHold: 30 }, cfg);
@@ -490,55 +543,11 @@
     while (i < n - 1) {
       const a = analyzeAt(candles, i, o, ind);
       if (!a.ok || a.decision.action === 'WAIT') { i++; continue; }
-      const side = a.decision.action;
-      const dir = side === 'BUY' ? 1 : -1;
-      const { entry, sl, tp1 } = a.plan;
-      signals.push({ i, side });
-
-      // 1) tunggu entry stop terpicu dalam jendela fillWindow
-      let fillIdx = -1;
-      let fillPx = 0;
-      for (let j = i + 1; j <= Math.min(n - 1, i + c2.fillWindow); j++) {
-        const cj = candles[j];
-        const trig = dir > 0 ? cj.h >= entry : cj.l <= entry;
-        if (trig) {
-          fillIdx = j;
-          fillPx = dir > 0 ? Math.max(entry, cj.o) : Math.min(entry, cj.o);
-          break;
-        }
-        // setup batal bila SL tersentuh sebelum entri
-        if (dir > 0 ? cj.l <= sl : cj.h >= sl) break;
-      }
-      if (fillIdx < 0) { i++; continue; }
-
-      const risk = dir * (fillPx - sl);
-      if (!(risk > 0)) { i = fillIdx + 1; continue; }
-
-      // 2) kelola posisi: SL dulu bila SL & TP di candle yang sama (konservatif)
-      let exitIdx = -1;
-      let exitPx = 0;
-      let outcome = '';
-      for (let j = fillIdx; j <= Math.min(n - 1, fillIdx + c2.maxHold); j++) {
-        const cj = candles[j];
-        const first = j === fillIdx;
-        const hitSL = dir > 0 ? cj.l <= sl : cj.h >= sl;
-        const hitTP = dir > 0 ? cj.h >= tp1 : cj.l <= tp1;
-        if (!first && (dir > 0 ? cj.o <= sl : cj.o >= sl)) { exitIdx = j; exitPx = cj.o; outcome = 'SL'; break; }
-        if (hitSL) { exitIdx = j; exitPx = sl; outcome = 'SL'; break; }
-        if (!first && (dir > 0 ? cj.o >= tp1 : cj.o <= tp1)) { exitIdx = j; exitPx = cj.o; outcome = 'TP'; break; }
-        if (hitTP) { exitIdx = j; exitPx = tp1; outcome = 'TP'; break; }
-      }
-      if (exitIdx < 0) {
-        exitIdx = Math.min(n - 1, fillIdx + c2.maxHold);
-        exitPx = candles[exitIdx].c;
-        outcome = 'Waktu';
-      }
-      const gross = dir * (exitPx - fillPx);
-      const R = (gross - o.spread) / (risk + o.spread);
-      trades.push({ signalIdx: i, fillIdx, exitIdx, side, entry: fillPx, exit: exitPx, sl, tp: tp1, R, outcome });
-      i = exitIdx + 1;
+      signals.push({ i, side: a.decision.action });
+      const r = simulate(candles, i, a.decision.action, a.plan, o, c2);
+      if (r.trade) trades.push(r.trade);
+      i = r.next;
     }
-
     return { trades, signals, stats: tradeStats(trades), startAt };
   }
 
@@ -709,9 +718,13 @@
     };
   }
 
-  function generateDemo(kind, instId, n, seed) {
+  // opts.stepMin: menit per candle (default 1440 = harian). <1440 → data intraday, hanya hari kerja.
+  function generateDemo(kind, instId, n, seed, opts) {
     const inst = INSTRUMENTS[instId] || INSTRUMENTS.EURUSD;
     n = n || 260;
+    const stepMin = (opts && opts.stepMin) || 1440;
+    const intraday = stepMin < 1440;
+    const lenScale = intraday ? Math.sqrt(1440 / stepMin) : 1;
     const rnd = mulberry32(seed == null ? 7 : seed);
     const gauss = () => {
       let u = 0;
@@ -720,7 +733,7 @@
       while (!v) v = rnd();
       return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
     };
-    const vol = inst.vol;
+    const vol = inst.vol * Math.sqrt(stepMin / 1440);
     const plans = {
       up: [['trend', 1], ['pull', 1]],
       down: [['trend', -1], ['pull', -1]],
@@ -734,6 +747,7 @@
     while (total < n) {
       const [type, d] = plan[pi % plan.length];
       let len = type === 'trend' ? 22 + Math.floor(rnd() * 20) : type === 'pull' ? 7 + Math.floor(rnd() * 8) : 45 + Math.floor(rnd() * 30);
+      len = Math.round(len * lenScale);
       segs.push({ type, d, len });
       total += len;
       pi++;
@@ -744,16 +758,31 @@
     let mu = px;
     const date = new Date();
     date.setUTCHours(0, 0, 0, 0);
-    // mundur n hari kerja
-    let back = n;
-    while (back > 0) {
-      date.setUTCDate(date.getUTCDate() - 1);
-      if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) back--;
+    let nextDate;
+    if (intraday) {
+      // mulai dari beberapa hari lalu agar data berakhir kira-kira hari ini; lewati Sabtu & Minggu
+      date.setUTCDate(date.getUTCDate() - Math.ceil(((n * stepMin) / 1440) * 1.4) - 1);
+      while (date.getUTCDay() === 0 || date.getUTCDay() === 6) date.setUTCDate(date.getUTCDate() + 1);
+      let cur = date.getTime() - stepMin * 60000;
+      nextDate = () => {
+        cur += stepMin * 60000;
+        for (let d = new Date(cur).getUTCDay(); d === 0 || d === 6; d = new Date(cur).getUTCDay()) {
+          cur = Math.floor(cur / 86400000) * 86400000 + 86400000;
+        }
+        return new Date(cur).toISOString().slice(0, 16).replace('T', ' ');
+      };
+    } else {
+      // mundur n hari kerja
+      let back = n;
+      while (back > 0) {
+        date.setUTCDate(date.getUTCDate() - 1);
+        if (date.getUTCDay() !== 0 && date.getUTCDay() !== 6) back--;
+      }
+      nextDate = () => {
+        do date.setUTCDate(date.getUTCDate() + 1); while (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+        return date.toISOString().slice(0, 10);
+      };
     }
-    const nextDate = () => {
-      do date.setUTCDate(date.getUTCDate() + 1); while (date.getUTCDay() === 0 || date.getUTCDay() === 6);
-      return date.toISOString().slice(0, 10);
-    };
     const dp = inst.dp;
     const round = (x) => Number(x.toFixed(dp));
 
@@ -777,10 +806,403 @@
     return out;
   }
 
+  /* ================================================================== */
+  /* MULTI-TIMEFRAME: 1D (bias & level besar) → 4H (setup) → 30m (pemicu) */
+  /* ================================================================== */
+  const MIN_MS = 60000;
+  const HOUR_MS = 3600000;
+  const M30_MS = 30 * MIN_MS;
+  const H4_MS = 4 * HOUR_MS;
+  const D1_MS = 24 * HOUR_MS;
+
+  const MTF_DEFAULTS = {
+    mtfThreshold: 7, // Ketat 9 / Normal 7 / Longgar 6
+    anchorMs: 0, // jam awal hari/4H terhadap 00:00 waktu data (untuk resample)
+  };
+
+  // Waktu dalam data diperlakukan sebagai waktu "naif" (zona waktu server yang sama di semua file).
+  function toEpoch(t) {
+    let s = String(t).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) s += 'T00:00:00Z';
+    else {
+      s = s.replace(' ', 'T');
+      if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s += 'Z';
+    }
+    return Date.parse(s);
+  }
+  function fmtEpoch(ms) {
+    return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+  }
+  function addEpoch(candles) {
+    for (const c of candles) if (c.ts == null) c.ts = toEpoch(c.t);
+    return candles;
+  }
+
+  // Menyusun candle timeframe lebih besar dari data yang lebih kecil (sinkron sempurna).
+  function resample(candles, durMs, opt) {
+    const o = Object.assign({ anchorMs: 0, minBars: 1 }, opt);
+    const out = [];
+    let cur = null;
+    let key = null;
+    const flush = () => { if (cur && cur.n >= o.minBars) out.push(cur); };
+    for (const c of candles) {
+      const ts = c.ts != null ? c.ts : toEpoch(c.t);
+      const k = Math.floor((ts - o.anchorMs) / durMs);
+      if (!cur || k !== key) {
+        flush();
+        key = k;
+        const st = k * durMs + o.anchorMs;
+        cur = { t: fmtEpoch(st), ts: st, o: c.o, h: c.h, l: c.l, c: c.c, n: 1 };
+      } else {
+        cur.h = Math.max(cur.h, c.h);
+        cur.l = Math.min(cur.l, c.l);
+        cur.c = c.c;
+        cur.n++;
+      }
+    }
+    flush();
+    return out;
+  }
+
+  // Cek apakah file 4H/1D yang diimpor sejajar dengan file 30m (zona waktu sama): high/low tiap candle HTF
+  // harus cocok dengan agregat candle 30m di dalamnya. Mengembalikan proporsi yang cocok (0..1).
+  function checkAlignment(m30, other, durMs) {
+    const byTs = new Map();
+    for (const c of m30) byTs.set(c.ts != null ? c.ts : toEpoch(c.t), c);
+    const steps = Math.round(durMs / M30_MS);
+    let hit = 0;
+    let tot = 0;
+    const stepN = Math.max(1, Math.floor(other.length / 600));
+    for (let k = 0; k < other.length; k += stepN) {
+      const o = other[k];
+      const ts = o.ts != null ? o.ts : toEpoch(o.t);
+      let hi = -Infinity;
+      let lo = Infinity;
+      let cnt = 0;
+      for (let j = 0; j < steps; j++) {
+        const c = byTs.get(ts + j * M30_MS);
+        if (c) { hi = Math.max(hi, c.h); lo = Math.min(lo, c.l); cnt++; }
+      }
+      if (cnt < Math.max(2, steps / 2)) continue; // terlalu sedikit data 30m untuk dibandingkan
+      tot++;
+      const tol = Math.abs(o.c) * 0.0003;
+      if (Math.abs(hi - o.h) <= tol && Math.abs(lo - o.l) <= tol) hit++;
+    }
+    return tot ? hit / tot : 0;
+  }
+
+  function prepareMTF(src, opts) {
+    const o = Object.assign({}, DEFAULTS, MTF_DEFAULTS, opts);
+    const M = addEpoch(src.m30);
+    if (!M.length || !Number.isFinite(M[0].ts)) throw new Error('Format waktu data 30m tidak dikenali.');
+    const H = src.h4 && src.h4.length ? addEpoch(src.h4) : resample(M, H4_MS, { anchorMs: o.anchorMs });
+    const D = src.d1 && src.d1.length ? addEpoch(src.d1) : resample(M, D1_MS, { anchorMs: o.anchorMs, minBars: 6 });
+    if (H.length < o.minCandles || D.length < o.minCandles) {
+      throw new Error('Riwayat 4H (' + H.length + ') atau 1D (' + D.length + ') kurang dari ' + o.minCandles + ' candle.');
+    }
+    const n = M.length;
+    const hIdx = new Int32Array(n);
+    const dIdx = new Int32Array(n);
+    let ph = -1;
+    let pd = -1;
+    for (let i = 0; i < n; i++) {
+      const close = M[i].ts + M30_MS; // candle 30m ke-i baru diketahui saat ia close
+      while (ph + 1 < H.length && H[ph + 1].ts + H4_MS <= close) ph++;
+      while (pd + 1 < D.length && D[pd + 1].ts + D1_MS <= close) pd++;
+      hIdx[i] = ph;
+      dIdx[i] = pd;
+    }
+    return {
+      M, H, D, o, hIdx, dIdx,
+      iM: computeIndicators(M, o), iH: computeIndicators(H, o), iD: computeIndicators(D, o),
+      memo: { h: { idx: -2, a: null }, d: { idx: -2, a: null } },
+      derived: { h4: !(src.h4 && src.h4.length), d1: !(src.d1 && src.d1.length) },
+    };
+  }
+
+  function htfAnalysis(ctx, tf, idx) {
+    const m = ctx.memo[tf];
+    if (m.idx === idx) return m.a;
+    const arr = tf === 'h' ? ctx.H : ctx.D;
+    const ind = tf === 'h' ? ctx.iH : ctx.iD;
+    m.a = analyzeAt(arr, idx, ctx.o, ind);
+    m.idx = idx;
+    return m.a;
+  }
+
+  const emaPts = (candles, ind, idx) => {
+    const c = candles[idx].c;
+    const slope = ind.ema[idx] - ind.ema[Math.max(0, idx - 3)];
+    return c > ind.ema[idx] && slope > 0 ? 1 : c < ind.ema[idx] && slope < 0 ? -1 : 0;
+  };
+
+  // Analisis top-down pada candle 30m ke-i. quick=true: keluar cepat bila tidak ada pemicu (untuk backtest).
+  function analyzeMTFAt(ctx, i, quick) {
+    const o = ctx.o;
+    const M = ctx.M;
+    const c = M[i];
+    const hi = ctx.hIdx[i];
+    const di = ctx.dIdx[i];
+    if (hi < o.minCandles - 1 || di < o.minCandles - 1) {
+      return { ok: false, error: 'Riwayat 4H/1D belum cukup pada candle ini.' };
+    }
+    const atr = Math.max(ctx.iM.atr[i], Math.abs(c.c) * 1e-9, 1e-12);
+    const pats = detectPatterns(M, i, atr);
+    const bestBull = pats.filter((p) => p.bias === 'bull').sort((a, b) => b.quality - a.quality)[0] || null;
+    const bestBear = pats.filter((p) => p.bias === 'bear').sort((a, b) => b.quality - a.quality)[0] || null;
+    const trigBull = bestBull && bestBull.quality >= 2 ? bestBull : null;
+    const trigBear = bestBear && bestBear.quality >= 2 ? bestBear : null;
+    if (quick && !trigBull && !trigBear) {
+      return { ok: true, i, decision: { action: 'WAIT' }, plan: null, score: 0, quick: true };
+    }
+
+    const D = htfAnalysis(ctx, 'd', di);
+    const H = htfAnalysis(ctx, 'h', hi);
+    const atrH = Math.max(ctx.iH.atr[hi], 1e-12);
+
+    const breakdown = [];
+    let S = 0;
+    const add = (label, pts, note) => { S += pts; breakdown.push({ label, pts, note }); };
+
+    // 1) Bias 1D
+    const dTrend = D.structure.trend === 'up' ? 2 : D.structure.trend === 'down' ? -2 : 0;
+    const dEma = emaPts(ctx.D, ctx.iD, di);
+    add('1D struktur', dTrend, D.structure.label);
+    add('1D EMA 20', dEma, dEma > 0 ? 'Close di atas EMA yang naik' : dEma < 0 ? 'Close di bawah EMA yang turun' : 'EMA tidak searah');
+
+    // 2) Setup 4H
+    const hTrend = H.structure.trend === 'up' ? 1 : H.structure.trend === 'down' ? -1 : 0;
+    const hEma = emaPts(ctx.H, ctx.iH, hi);
+    add('4H struktur', hTrend, H.structure.label);
+    add('4H EMA 20', hEma, hEma > 0 ? 'Close di atas EMA yang naik' : hEma < 0 ? 'Close di bawah EMA yang turun' : 'EMA tidak searah');
+
+    // 3) Pemicu candlestick 30m
+    const bullQ = bestBull ? bestBull.quality : 0;
+    const bearQ = bestBear ? bestBear.quality : 0;
+    add('Pemicu 30m', bullQ - bearQ, bullQ || bearQ ? [bestBull && bestBull.name, bestBear && bestBear.name].filter(Boolean).join(' vs ') : 'Tidak ada pola pada candle 30m terakhir');
+
+    // 4) Konfirmasi candlestick di 4H & 1D (candle terakhir yang sudah close)
+    const hp = detectPatterns(ctx.H, hi, atrH).filter((p) => p.bias !== 'neutral' && p.quality >= 2);
+    const dp = detectPatterns(ctx.D, di, Math.max(ctx.iD.atr[di], 1e-12)).filter((p) => p.bias !== 'neutral' && p.quality >= 2);
+    let conf = 0;
+    const confNames = [];
+    for (const [tf, arr] of [['4H', hp], ['1D', dp]]) {
+      const bu = arr.some((p) => p.bias === 'bull');
+      const be = arr.some((p) => p.bias === 'bear');
+      if (bu && !be) { conf += 1; confNames.push(tf + ' ' + arr.find((p) => p.bias === 'bull').name); }
+      else if (be && !bu) { conf -= 1; confNames.push(tf + ' ' + arr.find((p) => p.bias === 'bear').name); }
+    }
+    add('Konfirmasi 4H/1D', conf, confNames.length ? confNames.join(', ') : 'Tidak ada pola 4H/1D pada candle terakhir');
+
+    // 5) Lokasi: pemicu 30m muncul di level 4H / 1D
+    const levels = D.levels.map((l) => Object.assign({ tf: 'd' }, l)).concat(H.levels.map((l) => Object.assign({ tf: 'h' }, l)));
+    const spanOf = (sig) => {
+      const sl = M.slice(i - (sig ? sig.span : 1) + 1, i + 1);
+      return { lo: Math.min.apply(null, sl.map((x) => x.l)), hi: Math.max.apply(null, sl.map((x) => x.h)) };
+    };
+    const tolLoc = atrH * 0.5;
+    const levelPts = (l) => Math.min(3, 1 + (l.touches >= 2 ? 1 : 0) + (l.tf === 'd' ? 1 : 0));
+    const bs = spanOf(bestBull);
+    const es = spanOf(bestBear);
+    let locBull = 0;
+    let locBear = 0;
+    let locBullL = null;
+    let locBearL = null;
+    for (const l of levels) {
+      const pt = levelPts(l);
+      if (l.price <= c.c + tolLoc && bs.lo <= l.price + 0.75 * atrH && bs.lo >= l.price - 1.0 * atrH && pt > locBull) { locBull = pt; locBullL = l; }
+      if (l.price >= c.c - tolLoc && es.hi >= l.price - 0.75 * atrH && es.hi <= l.price + 1.0 * atrH && pt > locBear) { locBear = pt; locBearL = l; }
+    }
+    const lname = (l) => (l.tf === 'd' ? '1D' : '4H') + ' ' + l.price.toFixed(o.dp != null ? o.dp : 5) + ' (' + l.touches + '×)';
+    add('Lokasi', locBull - locBear,
+      locBull || locBear
+        ? [locBullL && 'support ' + lname(locBullL), locBearL && 'resistance ' + lname(locBearL)].filter(Boolean).join(' / ')
+        : 'Tidak berada di level 4H/1D');
+
+    /* ---- Keputusan ---- */
+    const T = o.mtfThreshold;
+    const warnings = [];
+    const reasons = [];
+    let action = 'WAIT';
+    let plan = null;
+    let sigUsed = null;
+    const wantBuy = S >= T;
+    const wantSell = S <= -T;
+    if (wantBuy || wantSell) {
+      const side = wantBuy ? 'BUY' : 'SELL';
+      const sig = wantBuy ? trigBull : trigBear;
+      const loc = wantBuy ? locBull : locBear;
+      if (!sig) reasons.push('Bias ' + (wantBuy ? 'bullish' : 'bearish') + ' kuat, tetapi belum ada candle pemicu 30m (pin bar / engulfing / star / inside bar breakout).');
+      else if (loc < 1) reasons.push('Ada pemicu 30m, tetapi tidak terjadi di level 4H/1D — entri di tengah ruang kosong tidak diambil.');
+      else {
+        const p = buildPlan(side, M, i, sig, atr, levels, o);
+        if (p.tooWide) reasons.push('Stop loss terlalu jauh (' + (p.risk / atr).toFixed(1) + '× ATR 30m).');
+        else if (p.rr1 < o.minRR) reasons.push('Ruang ke ' + (wantBuy ? 'resistance' : 'support') + ' 4H/1D terdekat terlalu sempit (RR ' + p.rr1.toFixed(2) + ' < ' + o.minRR + ').');
+        else {
+          action = side;
+          plan = p;
+          sigUsed = sig;
+          p.notes.forEach((n) => warnings.push(n));
+          if ((wantBuy && D.structure.trend === 'down') || (wantSell && D.structure.trend === 'up')) {
+            warnings.push('Melawan struktur 1D — risiko lebih tinggi.');
+          }
+        }
+      }
+    } else if (Math.abs(S) >= T - 2) {
+      reasons.push('Bias ' + (S > 0 ? 'bullish' : 'bearish') + ' (skor ' + S + ') hampir cukup — butuh ≥ ' + T + ' plus pemicu 30m di level 4H/1D.');
+    } else {
+      reasons.push('Tidak ada konfluensi 1D–4H–30m yang cukup (skor ' + S + ').');
+    }
+
+    const watch = [];
+    if (action === 'WAIT') {
+      const near = (dir) => levels.filter((l) => (dir > 0 ? l.price < c.c - 0.25 * atrH : l.price > c.c + 0.25 * atrH))
+        .sort((a, b) => (dir > 0 ? b.price - a.price : a.price - b.price))[0];
+      const sup = near(1);
+      const res = near(-1);
+      if (D.structure.trend === 'up') watch.push(sup ? 'Bias 1D naik: tunggu 30m membentuk pin bar/engulfing bullish di ' + lname(sup) + '.' : 'Bias 1D naik: tunggu pullback ke level lalu pemicu bullish 30m.');
+      else if (D.structure.trend === 'down') watch.push(res ? 'Bias 1D turun: tunggu 30m membentuk pin bar/engulfing bearish di ' + lname(res) + '.' : 'Bias 1D turun: tunggu pullback ke level lalu pemicu bearish 30m.');
+      else {
+        if (sup) watch.push('1D sideways: area BUY di ' + lname(sup) + '.');
+        if (res) watch.push('1D sideways: area SELL di ' + lname(res) + '.');
+      }
+    }
+
+    const confidence = Math.abs(S) >= 10 ? 'Tinggi' : Math.abs(S) >= 8 ? 'Sedang' : 'Rendah';
+    const summary = action === 'WAIT'
+      ? 'WAIT — ' + reasons[0]
+      : action + ' — ' + sigUsed.name + ' 30m di level ' + (action === 'BUY' ? locBullL : locBearL).price.toFixed(o.dp != null ? o.dp : 5) +
+        ' dengan bias 1D ' + D.structure.label.split(' ')[0].toLowerCase() + ' / 4H ' + H.structure.label.split(' ')[0].toLowerCase() + '; RR TP1 = ' + plan.rr1.toFixed(2) + '.';
+
+    return {
+      ok: true, i, time: c.t, price: c.c, atr, score: S, breakdown,
+      layers: {
+        d1: { structure: D.structure, price: D.price, ema: D.ema, levels: D.levels, time: ctx.D[di].t, idx: di },
+        h4: { structure: H.structure, price: H.price, ema: H.ema, levels: H.levels, time: ctx.H[hi].t, idx: hi },
+        m30: { patterns: pats },
+      },
+      decision: { action, confidence, summary, reasons, warnings, watch, signal: sigUsed },
+      plan,
+    };
+  }
+
+  // Backtest multi-timeframe (async agar UI tidak membeku). cfg.onProgress(0..1), cfg.cancel() → true untuk berhenti.
+  async function backtestMTF(ctx, cfg) {
+    const o = ctx.o;
+    const c2 = Object.assign({ fillWindow: 3, maxHold: 96, fromTs: null, onProgress: null, cancel: null }, cfg);
+    const M = ctx.M;
+    const n = M.length;
+    const trades = [];
+    const signals = [];
+    let i = 0;
+    while (i < n - 1 && (ctx.hIdx[i] < o.minCandles - 1 || ctx.dIdx[i] < o.minCandles - 1)) i++;
+    if (c2.fromTs != null) while (i < n - 1 && M[i].ts < c2.fromTs) i++;
+    const startAt = i;
+    let last = Date.now();
+    while (i < n - 1) {
+      if (Date.now() - last > 60) {
+        if (c2.cancel && c2.cancel()) return { cancelled: true, trades, signals, stats: tradeStats(trades), startAt };
+        if (c2.onProgress) c2.onProgress((i - startAt) / Math.max(1, n - startAt));
+        await new Promise((r) => setTimeout(r, 0));
+        last = Date.now();
+      }
+      const a = analyzeMTFAt(ctx, i, true);
+      if (!a.ok || a.decision.action === 'WAIT') { i++; continue; }
+      signals.push({ i, side: a.decision.action, score: a.score });
+      const r = simulate(M, i, a.decision.action, a.plan, o, c2);
+      if (r.trade) {
+        r.trade.score = a.score;
+        r.trade.ts = M[r.trade.fillIdx].ts;
+        trades.push(r.trade);
+      }
+      i = r.next;
+    }
+    if (c2.onProgress) c2.onProgress(1);
+    return { cancelled: false, trades, signals, stats: tradeStats(trades), startAt };
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Statistik & probabilitas                                            */
+  /* ------------------------------------------------------------------ */
+  // Interval kepercayaan Wilson untuk proporsi (lebih tepat dari normal untuk n kecil).
+  function wilson(k, n, z) {
+    z = z || 1.96;
+    if (!n) return { p: 0, lo: 0, hi: 1 };
+    const p = k / n;
+    const d = 1 + (z * z) / n;
+    const c = (p + (z * z) / (2 * n)) / d;
+    const h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
+    return { p, lo: Math.max(0, c - h), hi: Math.min(1, c + h) };
+  }
+
+  function groupStats(trades) {
+    const s = tradeStats(trades);
+    const w = wilson(s.wins, s.trades);
+    const wins = trades.filter((t) => t.R > 0);
+    const losses = trades.filter((t) => t.R <= 0);
+    const avgWin = wins.length ? wins.reduce((x, t) => x + t.R, 0) / wins.length : 0;
+    const avgLoss = losses.length ? Math.abs(losses.reduce((x, t) => x + t.R, 0)) / losses.length : 0;
+    return {
+      n: s.trades, wins: s.wins, winRate: s.winRate, ciLo: w.lo, ciHi: w.hi,
+      avgR: s.avgR, totalR: s.totalR, profitFactor: s.profitFactor, maxDD: s.maxDD,
+      avgWin, avgLoss,
+      // win rate impas (expectancy = 0) untuk rata-rata menang/kalah yang teramati
+      breakEven: avgWin + avgLoss > 0 ? avgLoss / (avgWin + avgLoss) : null,
+      equity: s.equity,
+    };
+  }
+
+  function summarizeMTF(trades, opts) {
+    const o = Object.assign({ splitFrac: 0.7, scoreCap: 11, minScore: 7 }, opts);
+    const by = (keyFn) => {
+      const m = new Map();
+      for (const t of trades) {
+        const k = keyFn(t);
+        if (!m.has(k)) m.set(k, []);
+        m.get(k).push(t);
+      }
+      return m;
+    };
+    const overall = groupStats(trades);
+    const byYear = [...by((t) => new Date(t.ts).getUTCFullYear()).entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => Object.assign({ key: k }, groupStats(v)));
+    const bySide = [...by((t) => t.side).entries()].map(([k, v]) => Object.assign({ key: k }, groupStats(v)));
+    const byScore = [...by((t) => Math.min(Math.abs(t.score), o.scoreCap)).entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => Object.assign({ key: k }, groupStats(v)));
+    let split = null;
+    if (trades.length >= 10) {
+      const t0 = trades[0].ts;
+      const t1 = trades[trades.length - 1].ts;
+      const splitTs = o.splitTs != null ? o.splitTs : t0 + (t1 - t0) * o.splitFrac;
+      split = {
+        splitTs,
+        inSample: groupStats(trades.filter((t) => t.ts < splitTs)),
+        outSample: groupStats(trades.filter((t) => t.ts >= splitTs)),
+      };
+    }
+    let verdict = 'Belum ada trade.';
+    if (overall.n >= 1) {
+      if (overall.n < 30) verdict = 'Sampel terlalu kecil (n=' + overall.n + ') untuk menyimpulkan apa pun.';
+      else if (overall.breakEven != null && overall.ciLo > overall.breakEven && overall.avgR > 0) verdict = 'Win rate (batas bawah CI 95%) di atas titik impas dan ekspektasi positif — ada indikasi edge pada data ini, tetap perlu dikonfirmasi di luar sampel.';
+      else if (overall.avgR <= 0) verdict = 'Ekspektasi ≤ 0 R setelah spread — aturan ini tidak menguntungkan pada data ini.';
+      else verdict = 'Ekspektasi positif, tetapi batas bawah CI 95% belum melewati titik impas — belum bisa dibedakan dari keberuntungan.';
+    }
+    return { overall, byYear, bySide, byScore, split, verdict, scoreCap: o.scoreCap };
+  }
+
+  // Estimasi probabilitas menang historis untuk skor tertentu (dari hasil backtest).
+  function probabilityForScore(summary, score) {
+    if (!summary) return null;
+    const key = Math.min(Math.abs(score), summary.scoreCap);
+    const b = summary.byScore.find((x) => x.key === key);
+    if (!b) return null;
+    return { n: b.n, winRate: b.winRate, lo: b.ciLo, hi: b.ciHi, avgR: b.avgR, reliable: b.n >= 20 };
+  }
+
   return {
     DEFAULTS, INSTRUMENTS,
     computeIndicators, findSwings, marketStructure, buildLevels, detectPatterns, buildPlan,
     analyze, analyzeAt, backtest, tradeStats, positionSize, pipValueUSD,
     parseCSV, inferPrecision, generateDemo,
+    simulate, toEpoch, fmtEpoch, resample, checkAlignment, prepareMTF, analyzeMTFAt, backtestMTF,
+    wilson, groupStats, summarizeMTF, probabilityForScore, MTF_DEFAULTS,
   };
 });

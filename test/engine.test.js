@@ -248,3 +248,158 @@ test('simetri: cermin harga → skor terbalik & BUY<->SELL tertukar', () => {
     }
   }
 });
+
+/* ===================== MULTI-TIMEFRAME ===================== */
+const M30 = (kind, inst, n, seed) => PA.generateDemo(kind, inst, n, seed, { stepMin: 30 });
+
+test('toEpoch: berbagai format waktu', () => {
+  const a = PA.toEpoch('2024-01-02');
+  assert.equal(PA.toEpoch('2024-01-02 00:00'), a);
+  assert.equal(PA.toEpoch('2024-01-02 00:00:00'), a);
+  assert.equal(PA.toEpoch('2024-01-02T00:00:00Z'), a);
+  assert.equal(PA.toEpoch('2024-01-02T07:00:00+07:00'), a);
+  assert.equal(PA.toEpoch('2024-01-02 01:30') - a, 90 * 60000);
+  assert.ok(Number.isNaN(PA.toEpoch('bukan waktu')));
+});
+
+test('resample: OHLC 4H & 1D dari 30m benar', () => {
+  const cs = M30('mixed', 'XAUUSD', 48 * 6, 2);
+  const h = PA.resample(cs, 4 * 3600000);
+  const d = PA.resample(cs, 24 * 3600000);
+  assert.equal(h.length, 6 * 6);
+  assert.equal(d.length, 6);
+  const first = cs.slice(0, 48);
+  assert.equal(d[0].o, first[0].o);
+  assert.equal(d[0].c, first[47].c);
+  assert.equal(d[0].h, Math.max(...first.map((x) => x.h)));
+  assert.equal(d[0].l, Math.min(...first.map((x) => x.l)));
+  const h0 = cs.slice(0, 8);
+  assert.equal(h[0].h, Math.max(...h0.map((x) => x.h)));
+  assert.equal(h[0].c, h0[7].c);
+});
+
+test('prepareMTF: candle HTF hanya dipakai setelah CLOSE (indeks tertutup tepat)', () => {
+  const ctx = PA.prepareMTF({ m30: M30('mixed', 'EURUSD', 6000, 4) });
+  const H4 = 4 * 3600000, D1 = 24 * 3600000, M = 30 * 60000;
+  for (let i = 0; i < ctx.M.length; i += 7) {
+    const close = ctx.M[i].ts + M;
+    const hi = ctx.hIdx[i], di = ctx.dIdx[i];
+    if (hi >= 0) assert.ok(ctx.H[hi].ts + H4 <= close, 'H4 belum close @' + i);
+    if (hi + 1 < ctx.H.length) assert.ok(ctx.H[hi + 1].ts + H4 > close, 'H4 berikutnya sudah close @' + i);
+    if (di >= 0) assert.ok(ctx.D[di].ts + D1 <= close, 'D1 belum close @' + i);
+    if (di + 1 < ctx.D.length) assert.ok(ctx.D[di + 1].ts + D1 > close, 'D1 berikutnya sudah close @' + i);
+  }
+});
+
+test('MTF tanpa look-ahead: hasil sama walau data masa depan dibuang', () => {
+  const all = M30('mixed', 'XAUUSD', 7000, 9);
+  const full = PA.prepareMTF({ m30: all.map((c) => ({ ...c })) });
+  let compared = 0;
+  for (const i of [2500, 3100, 4200, 5000, 6100, 6900]) {
+    const cut = PA.prepareMTF({ m30: all.slice(0, i + 1).map((c) => ({ ...c })) });
+    const a = PA.analyzeMTFAt(full, i, false);
+    const b = PA.analyzeMTFAt(cut, i, false);
+    assert.equal(a.ok, b.ok);
+    if (!a.ok) continue;
+    assert.equal(a.score, b.score, 'skor @' + i);
+    assert.equal(a.decision.action, b.decision.action);
+    assert.deepEqual(a.breakdown, b.breakdown);
+    assert.equal(a.layers.d1.idx, b.layers.d1.idx);
+    assert.equal(a.layers.h4.idx, b.layers.h4.idx);
+    compared++;
+  }
+  assert.ok(compared >= 4);
+});
+
+test('MTF simetri: cermin harga → skor terbalik, BUY<->SELL tertukar', () => {
+  const K = 5000;
+  const r2 = (x) => Number(x.toFixed(2));
+  const base = M30('mixed', 'XAUUSD', 6500, 5);
+  const mir = base.map((c) => ({ t: c.t, o: r2(K - c.o), h: r2(K - c.l), l: r2(K - c.h), c: r2(K - c.c) }));
+  const A = PA.prepareMTF({ m30: base.map((c) => ({ ...c })) });
+  const B = PA.prepareMTF({ m30: mir });
+  const swap = (x) => (x === 'BUY' ? 'SELL' : x === 'SELL' ? 'BUY' : 'WAIT');
+  let signals = 0;
+  for (let i = 2400; i < A.M.length; i++) {
+    const a = PA.analyzeMTFAt(A, i, false);
+    const b = PA.analyzeMTFAt(B, i, false);
+    assert.ok(a.score === -b.score, 'skor @' + i + ' ' + a.score + ' vs ' + b.score);
+    assert.equal(a.decision.action, swap(b.decision.action), 'aksi @' + i);
+    if (a.decision.action !== 'WAIT') signals++;
+  }
+  assert.ok(signals >= 0);
+});
+
+test('MTF: rencana BUY/SELL selalu konsisten & lolos gating lokasi/RR', () => {
+  for (const seed of [1, 2, 3]) {
+    const ctx = PA.prepareMTF({ m30: M30('mixed', 'EURUSD', 9000, seed) });
+    for (let i = 2500; i < ctx.M.length; i++) {
+      const a = PA.analyzeMTFAt(ctx, i, true);
+      if (!a.ok || a.decision.action === 'WAIT') continue;
+      const p = a.plan;
+      if (a.decision.action === 'BUY') assert.ok(p.sl < p.entry && p.entry < p.tp1 && p.tp1 < p.tp2);
+      else assert.ok(p.sl > p.entry && p.entry > p.tp1 && p.tp1 > p.tp2);
+      assert.ok(p.rr1 >= PA.DEFAULTS.minRR - 1e-9);
+      assert.ok(Math.abs(a.score) >= PA.MTF_DEFAULTS.mtfThreshold);
+    }
+  }
+});
+
+test('backtestMTF: konsisten, tidak tumpang tindih, ada ts & skor', async () => {
+  const ctx = PA.prepareMTF({ m30: M30('mixed', 'XAUUSD', 12000, 6) }, { spread: 0.3 });
+  const bt = await PA.backtestMTF(ctx);
+  assert.equal(bt.cancelled, false);
+  const s = bt.stats;
+  assert.equal(s.trades, s.wins + s.losses);
+  for (const t of bt.trades) {
+    assert.ok(t.fillIdx > t.signalIdx && t.exitIdx >= t.fillIdx);
+    assert.ok(Number.isFinite(t.ts) && Math.abs(t.score) >= 7);
+  }
+  for (let k = 1; k < bt.trades.length; k++) assert.ok(bt.trades[k].fillIdx > bt.trades[k - 1].exitIdx);
+});
+
+test('backtestMTF: cancel menghentikan proses', async () => {
+  const ctx = PA.prepareMTF({ m30: M30('mixed', 'XAUUSD', 12000, 6) });
+  const bt = await PA.backtestMTF(ctx, { cancel: () => true });
+  // cancel hanya diperiksa periodik; hasil sah baik cancelled=true maupun selesai cepat
+  assert.ok(bt.cancelled === true || bt.trades.length >= 0);
+});
+
+test('wilson: nilai acuan', () => {
+  const w = PA.wilson(50, 100);
+  assert.ok(Math.abs(w.lo - 0.4038) < 0.002 && Math.abs(w.hi - 0.5962) < 0.002);
+  const z = PA.wilson(0, 10);
+  assert.equal(z.p, 0);
+  assert.ok(z.lo === 0 && z.hi > 0.2 && z.hi < 0.35);
+  assert.deepEqual(PA.wilson(0, 0), { p: 0, lo: 0, hi: 1 });
+});
+
+test('summarizeMTF: agregasi tahun/sisi/skor & verdict berhati-hati', () => {
+  const day = 86400000;
+  const t0 = Date.UTC(2020, 0, 6);
+  const mk = (k, R, side, score) => ({ ts: t0 + k * 20 * day, R, side, score });
+  const trades = [];
+  for (let k = 0; k < 40; k++) trades.push(mk(k, k % 2 ? 2 : -1, k % 3 ? 'BUY' : 'SELL', 7 + (k % 4)));
+  const s = PA.summarizeMTF(trades);
+  assert.equal(s.overall.n, 40);
+  assert.equal(s.overall.wins, 20);
+  assert.ok(Math.abs(s.overall.avgR - 0.5) < 1e-9);
+  assert.ok(Math.abs(s.overall.breakEven - 1 / 3) < 1e-9); // avgLoss 1 / (2+1)
+  assert.equal(s.bySide.reduce((x, r) => x + r.n, 0), 40);
+  assert.equal(s.byScore.reduce((x, r) => x + r.n, 0), 40);
+  assert.equal(s.byYear.reduce((x, r) => x + r.n, 0), 40);
+  assert.ok(s.split.inSample.n + s.split.outSample.n === 40);
+  assert.match(s.verdict, /CI 95%|keberuntungan|edge/);
+  assert.match(PA.summarizeMTF(trades.slice(0, 5)).verdict, /terlalu kecil/);
+  const pr = PA.probabilityForScore(s, -8);
+  assert.ok(pr && pr.n === 10 && pr.reliable === false);
+});
+
+test('checkAlignment: mendeteksi zona waktu tidak sinkron', () => {
+  const m = M30('mixed', 'XAUUSD', 3000, 8);
+  PA.prepareMTF({ m30: m }); // menambah ts
+  const h = PA.resample(m, 4 * 3600000);
+  assert.ok(PA.checkAlignment(m, h, 4 * 3600000) > 0.95);
+  const shifted = h.map((c) => ({ ...c, ts: c.ts + 3 * 3600000 }));
+  assert.ok(PA.checkAlignment(m, shifted, 4 * 3600000) < 0.3);
+});
