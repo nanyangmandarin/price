@@ -2,9 +2,9 @@
  "rule": "xauusd-pinbar-h4-v1",
  "instrument": "XAUUSD",
  "forward_from": "2026-11-03T22:00:00Z",
- "updated": "2026-11-13 03:28 UTC",
- "lastBar": "2026-11-12 22:00 UTC",
- "lastClose": 3907.795,
+ "updated": "2026-11-14 03:23 UTC",
+ "lastBar": "2026-11-13 18:00 UTC",
+ "lastClose": 3883.245,
  "forwardSummary": {
   "n": 0
  },
