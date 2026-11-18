@@ -2,43 +2,25 @@
  "rule": "xauusd-pinbar-h4-v1",
  "instrument": "XAUUSD",
  "forward_from": "2026-11-03T22:00:00Z",
- "updated": "2026-11-17 05:08 UTC",
- "lastBar": "2026-11-17 02:00 UTC",
- "lastClose": 3865.588,
+ "updated": "2026-11-18 04:30 UTC",
+ "lastBar": "2026-11-18 02:00 UTC",
+ "lastClose": 3793.628,
  "forwardSummary": {
-  "n": 1,
-  "wins": 1,
+  "n": 2,
+  "wins": 2,
   "winRate": 1,
-  "winLo": 0.20654329147389294,
+  "winLo": 0.34237195288961925,
   "winHi": 1,
-  "avgR": 0.4912803807452787,
-  "avgRLo": null,
-  "avgRHi": null,
-  "totalR": 0.4912803807452787,
-  "breakEven": 0.6705647126533257
+  "avgR": 0.4912860124489022,
+  "avgRLo": 0.4912749743098001,
+  "avgRHi": 0.49129705058800427,
+  "totalR": 0.9825720248978044,
+  "breakEven": 0.670562180327742
  },
- "verdict": "Terlalu dini (1 trade; evaluasi pertama di 25 trade).",
+ "verdict": "Terlalu dini (2 trade; evaluasi pertama di 25 trade).",
  "dataRevisions": 0,
  "pending": null,
- "open": [
-  {
-   "firstSeen": "2026-11-17 05:08 UTC",
-   "signalTime": "2026-11-16 14:00 UTC",
-   "signalTs": 1794837600000,
-   "side": "SELL",
-   "score": 9,
-   "entryTime": "2026-11-16 18:00 UTC",
-   "entry": 3856.045,
-   "sl": 3907.4195075513585,
-   "tp": 3830.357746224321,
-   "status": "terbuka",
-   "exitTime": null,
-   "exit": null,
-   "outcome": null,
-   "R": null,
-   "unrealizedR": -0.19048077023699414
-  }
- ],
+ "open": [],
  "forward": [
   {
    "firstSeen": "2026-11-17 05:08 UTC",
@@ -67,12 +49,12 @@
    "entry": 3856.045,
    "sl": 3907.4195075513585,
    "tp": 3830.357746224321,
-   "status": "terbuka",
-   "exitTime": null,
-   "exit": null,
-   "outcome": null,
-   "R": null,
-   "unrealizedR": -0.19048077023699414
+   "status": "selesai",
+   "exitTime": "2026-11-17 22:00 UTC",
+   "exit": 3830.357746224321,
+   "outcome": "TP",
+   "R": 0.4912916441525257,
+   "unrealizedR": null
   }
  ],
  "reference": {
